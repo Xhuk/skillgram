@@ -71,7 +71,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto
@@ -1803,11 +1803,14 @@ def missing(hub: Hub, text: str, limit: int = 8) -> dict:
         if score:
             rows.append({"skill": name, "tipo": tipo, "score": score})
     rows.sort(key=lambda r: (-r["score"], r["skill"]))
+    found = bool(rows and rows[0]["score"] >= 2)
+    best = rows[0]["skill"] if rows else ""
+    record_demand(text, found, best=best, hits=len(rows))
     return {
         "ok": True,
         "op": "missing",
         "query": text,
-        "found": bool(rows and rows[0]["score"] >= 2),
+        "found": found,
         "candidates": rows[:limit],
     }
 
@@ -2345,6 +2348,97 @@ def inject_protocol(hub: Hub, project: Path, files: list | None = None, apply: b
     return {"ok": True, "op": "protocol", "aplicado": apply, "files": results}
 
 # ---------------------------------------------------------------------------
+# Demanda: que busca la gente y el hub no tiene (roadmap real)
+# ---------------------------------------------------------------------------
+
+
+def _demand_table(conn) -> None:
+    conn.execute("CREATE TABLE IF NOT EXISTS demand ("
+                 "id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, query TEXT, "
+                 "found INTEGER, best TEXT, hits INTEGER)")
+
+
+def record_demand(query: str, found: bool, best: str = "", hits: int = 0, path: Path | None = None) -> None:
+    """Registra una consulta a `missing`. Best-effort: nunca rompe la consulta."""
+    try:
+        conn = _index_conn(path)
+        try:
+            _demand_table(conn)
+            conn.execute("INSERT INTO demand (at, query, found, best, hits) VALUES (?,?,?,?,?)",
+                         (time.strftime("%Y-%m-%dT%H:%M:%S"), query[:200], 1 if found else 0, best, hits))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - el registro no puede tumbar la consulta
+        pass
+
+
+def demand_report(limit: int = 20, path: Path | None = None) -> dict:
+    """Top de consultas sin cobertura: eso es lo que falta escribir."""
+    conn = _index_conn(path)
+    try:
+        _demand_table(conn)
+        rows = conn.execute(
+            "SELECT query, COUNT(*) AS n, MAX(at) AS last_at FROM demand WHERE found = 0 "
+            "GROUP BY lower(query) ORDER BY n DESC, last_at DESC LIMIT ?", (limit,)).fetchall()
+        covered = conn.execute("SELECT COUNT(*) FROM demand WHERE found = 1").fetchone()[0]
+    finally:
+        conn.close()
+    return {
+        "ok": True,
+        "op": "demand",
+        "uncovered": [{"query": r[0], "times": r[1], "last_at": r[2]} for r in rows],
+        "covered_queries": covered,
+        "total_uncovered": sum(r[1] for r in rows),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Hub git-backed: el hub es un repo, las otras maquinas lo ven por git
+# ---------------------------------------------------------------------------
+
+
+def _git(hub: Hub, *args) -> tuple:
+    import subprocess as _sp
+
+    proc = _sp.run(["git", "-C", str(hub.root), *args], capture_output=True, text=True)
+    return proc.returncode, (proc.stdout or "").strip(), (proc.stderr or "").strip()
+
+
+def hub_git(hub: Hub, action: str = "status", apply: bool = False) -> dict:
+    """status | init | pull | push del repo del hub. Conflictos: los resuelve git."""
+    if not hub.root.is_dir():
+        return {"ok": False, "op": "git", "error": f"hub not found: {hub.root}"}
+    is_repo = (hub.root / ".git").exists()
+    if action == "status":
+        if not is_repo:
+            return {"ok": True, "op": "git", "hub": str(hub.root), "repo": False,
+                    "note": "hub is not a git repo; run `skillgram git init`"}
+        rc, out, err = _git(hub, "status", "--porcelain", "--branch")
+        return {"ok": rc == 0, "op": "git", "hub": str(hub.root), "repo": True,
+                "dirty": bool([l for l in out.splitlines() if not l.startswith("##")]),
+                "status": out, "error": err or None}
+    if action == "init":
+        if is_repo:
+            return {"ok": True, "op": "git", "repo": True, "note": "already a repo"}
+        if not apply:
+            return {"ok": True, "op": "git", "repo": False, "would": "git init + .gitignore", "applied": False}
+        rc, out, err = _git(hub, "init", "-b", "main")
+        ignore = hub.root / ".gitignore"
+        if rc == 0 and not ignore.exists():
+            ignore.write_text("skillgram-index.db\n*skillgram-bak-*\n", encoding="utf-8")
+        return {"ok": rc == 0, "op": "git", "repo": rc == 0, "out": out, "error": err or None}
+    if action in ("pull", "push"):
+        if not is_repo:
+            return {"ok": False, "op": "git", "error": "hub is not a git repo; run `skillgram git init`"}
+        if not apply:
+            return {"ok": True, "op": "git", "would": f"git {action}", "applied": False}
+        args = ("pull", "--ff-only") if action == "pull" else ("push",)
+        rc, out, err = _git(hub, *args)
+        return {"ok": rc == 0, "op": "git", "action": action, "out": out[-800:], "error": err[-800:] or None}
+    return {"ok": False, "op": "git", "error": f"unknown action: {action}"}
+
+# ---------------------------------------------------------------------------
 # Log y estado
 # ---------------------------------------------------------------------------
 
@@ -2636,6 +2730,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_lint = sub.add_parser("lint", parents=[common], help="quality gate: frontmatter, name, description, body size")
     p_lint.add_argument("skill", nargs="?", help="one skill (default: the whole hub)")
     p_lint.add_argument("--strict", action="store_true", help="warnings also fail")
+    p_dem = sub.add_parser("demand", parents=[common], help="queries the hub could not cover (real roadmap)")
+    p_dem.add_argument("--limit", type=int, default=20)
+    p_git = sub.add_parser("git", parents=[common], help="hub as a git repo: status | init | pull | push")
+    p_git.add_argument("action", choices=["status", "init", "pull", "push"], nargs="?", default="status")
+    p_git.add_argument("--apply", action="store_true")
     sub.add_parser("mcp", parents=[common], help="server MCP (stdio) para que el agente consulte el hub")
     sub.add_parser("doctor", parents=[common], help="inventario: harnesss, native, collisions, drift")
     p_status = sub.add_parser("status", parents=[common], help="drift actual sin tocar nada")
@@ -2690,6 +2789,10 @@ def main(argv: list[str] | None = None) -> int:
         result = apply_precedence(hub, apply=args.apply)
     elif args.cmd == "lint":
         result = lint_hub(hub, only=args.skill, strict=args.strict)
+    elif args.cmd == "demand":
+        result = demand_report(limit=args.limit)
+    elif args.cmd == "git":
+        result = hub_git(hub, action=args.action, apply=args.apply)
     elif args.cmd == "index":
         result = index_build(hub)
     elif args.cmd == "search":
@@ -2864,6 +2967,10 @@ def main(argv: list[str] | None = None) -> int:
         result = apply_precedence(hub, apply=args.apply)
     elif args.cmd == "lint":
         result = lint_hub(hub, only=args.skill, strict=args.strict)
+    elif args.cmd == "demand":
+        result = demand_report(limit=args.limit)
+    elif args.cmd == "git":
+        result = hub_git(hub, action=args.action, apply=args.apply)
     elif args.cmd == "index":
         result = index_build(hub)
     elif args.cmd == "search":

@@ -374,3 +374,32 @@ JSON key (`promoted`, `already_present`, `missing_links`, `native`, `collisions`
 
 Internal code comments and docstrings are still partly Spanish; translating them is
 tracked as cleanup, not as behaviour.
+## Demand log and a git-backed hub (0.8)
+
+```bash
+skillgram missing "quote a mortgage"   # every call is recorded
+skillgram demand                       # what the hub could NOT cover, ranked by times asked
+```
+
+`demand` is the roadmap: the queries nobody could answer. `covered_queries` counts
+the ones the hub did answer, so you can see the ratio. (In this workspace, `quote a
+mortgage` showed up 3 times across sessions — that is a skill waiting to be written.)
+
+```bash
+skillgram git status        # is the hub a repo? dirty?
+skillgram git init --apply  # make the hub a git repo (adds .gitignore for the index)
+skillgram git pull --apply  # ff-only: git resolves conflicts, skillgram does not
+skillgram git push --apply
+```
+
+The hub is the asset. With git under it, "sync between machines" is git's job —
+skillgram only reports and pushes. Conflicts are resolved by git, never by
+skillgram guessing which skill version wins.
+
+## Remaining gaps
+
+1. No semantic search (FTS5 only): cross-language synonyms still miss.
+2. No merge of divergent skills: same name + different content is a conflict to resolve by hand.
+3. No permissions/profile split (agent vs admin). `mcp` could grow a `--read-only`.
+4. No scheduled review; run `skillgram review --days N` from your own cron/CI.
+5. MCP is tools-only (no resources/prompts/sampling).
