@@ -141,6 +141,8 @@ in the hub and as a real copy inside the project (promote it, delete the copy).
 | `watch` | poll the hub and re-sync on add/remove/rename. |
 | `daemon` | JSON-line server over stdin/stdout, for supervisors. |
 | `init [name]` | write `<project>/.agents/config.json`. `--force` to replace. |
+| `install` | one idempotent command: harness → hub → MCP (delegated to the harness CLI) → propagate. `--dry-run` to preview. |
+| `propagate` | mount + protocol + ledger for every git repo of one harness under `--root` (`--apply`, `--force`, `--depth`). |
 | `use <skill>...` | promote hub skills into the project (junction + manifest). |
 | `unuse <skill>...` | remove them from the project scope. |
 | `project-status` | health of a project scope. |
@@ -428,3 +430,39 @@ skillgram mount --apply --no-bootstrap   # never bootstrap, only mount what exis
 
 Then it propagates that set to every harness that reads project-level dirs, and
 writes the skillgram protocol into `AGENTS.md`/`CLAUDE.md`.
+
+## `install`: one command per machine (1.1)
+
+```bash
+skillgram install --dry-run                     # the exact commands, nothing written
+skillgram install                               # hub -> MCP -> propagate, idempotent
+skillgram install --harness codex --root C:\proyectos
+skillgram propagate --harness codex --root C:\proyectos --apply   # the sweep on its own
+```
+
+`install` reports what it did in three blocks — `done now`, `already in place`,
+`to take effect` — plus `needs you` when something is blocked:
+
+1. **Resolves the harness**: `SKILLGRAM_HARNESS` (the value `install` writes into
+   the MCP registration) → `--harness` → the process tree → `unknown`, and it
+   says so instead of guessing.
+2. **Creates or verifies the hub** (`~/.agents/skills`, or `--hub`).
+3. **Registers the MCP server by delegating to the harness' own CLI**:
+   `reasonix mcp add`, `codex mcp add`, `claude mcp add`, `hermes mcp add`,
+   `gemini mcp add`. skillgram never edits a harness config by hand. The server
+   gets `SKILLGRAM_HARNESS` and `SKILLGRAM_HUB` in its environment, so it always
+   serves the same hub and knows who is asking.
+4. **Propagates** `mount --apply` + the protocol block + a ledger entry to the
+   repos of that harness that are not yet in `~/.agents/skillgram-ledger.json`.
+5. **Says what takes effect when**: Codex restarts the session, Claude Code
+   restarts the CLI, Reasonix needs `/reload`, Cursor needs a Reload Window.
+
+`propagate` is that last step alone: it discovers git repos under `--root`
+(depth-bounded, skipping `node_modules`/`dist`/…), skips what the ledger already
+knows (`--force` to redo it), and never invents a set — a repo with no scope is
+reported with the exact next command (or `--bootstrap` to let the connected LLM
+pick one).
+
+Cursor has no MCP CLI: `install` says so and points at the UI instead of editing
+`.cursor/mcp.json` behind your back. Nothing is guessed, nothing is copied, and
+running it twice is a no-op.

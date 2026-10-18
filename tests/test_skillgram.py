@@ -472,5 +472,338 @@ class TestMcp(HomeCase):
         self.assertEqual(lines[0]["result"]["serverInfo"]["name"], "skillgram")
         self.assertEqual(len(lines[1]["result"]["tools"]), 5)
         self.assertIn("content", lines[2]["result"])
+class FakeCli:
+    """Stands in for `reasonix|codex|claude|hermes mcp ...` so no real config is touched."""
+
+    def __init__(self, add_exit: int = 0, point_elsewhere: bool = False):
+        self.calls = []
+        self.registered = False
+        self.add_exit = add_exit
+        self.add_argv = None
+        self.point_elsewhere = point_elsewhere
+
+    def marker(self) -> str:
+        parts = os.environ.get("SKILLGRAM_MCP_CMD", "").split()
+        return parts[1] if len(parts) > 1 else "skillgram"
+
+    def __call__(self, argv):
+        argv = [str(a) for a in argv]
+        self.calls.append(argv)
+        verb = argv[2] if len(argv) > 2 else ""
+        marker = "C:/somewhere/else/other-mcp.py" if self.point_elsewhere else self.marker()
+        if verb == "get":
+            return (0, f"{argv[3]}\n  command: python\n  args: {marker} mcp") if self.registered else (1, "not found")
+        if verb == "list":
+            return 0, (f"skillgram  stdio  {marker} mcp" if self.registered else "no servers configured")
+        if verb == "add":
+            if self.add_exit == 0:
+                self.registered = True
+                self.add_argv = argv
+            return self.add_exit, "added" if self.add_exit == 0 else "boom: config is locked"
+        return 0, ""
+
+    def adds(self) -> list:
+        return [c for c in self.calls if len(c) > 2 and c[2] == "add"]
+
+
+class InstallCase(HomeCase):
+    """Isolates the ledger, the env switchboard, the process probe and `which`."""
+
+    ENV_KEYS = ("SKILLGRAM_HARNESS", "SKILLGRAM_LEDGER", "SKILLGRAM_MCP_CMD")
+
+    def setUp(self):
+        super().setUp()
+        self._env = {k: os.environ.get(k) for k in self.ENV_KEYS}
+        for key in self.ENV_KEYS:
+            os.environ.pop(key, None)
+        self.ledger = self.tmp / "ledger.json"
+        os.environ["SKILLGRAM_LEDGER"] = str(self.ledger)
+        os.environ["SKILLGRAM_MCP_CMD"] = f"{sys.executable} {self.tmp / 'skillgram.py'} mcp"
+        self._which = skillgram._which
+        self._chain = skillgram.process_chain
+        skillgram._which = lambda name: f"/fake/bin/{name}"
+        skillgram.process_chain = lambda limit=6: []
+        # install/propagate resolve the project from the cwd: a test must never
+        # touch the checkout it runs in.
+        self.cwd = self.tmp / "cwd"
+        self.cwd.mkdir()
+        os.chdir(self.cwd)
+
+    def tearDown(self):
+        skillgram._which = self._which
+        skillgram.process_chain = self._chain
+        for key, value in self._env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        super().tearDown()
+
+    def make_repo(self, name: str = "app", with_scope: bool = True) -> Path:
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        repo = self.tmp / "repos" / name
+        (repo / ".git").mkdir(parents=True)
+        if with_scope:
+            skillgram.init_project(name, str(repo))
+            skillgram.promote(skillgram.Hub(self.hub_root), ["deploy"], repo)
+        return repo
+
+
+class TestHarnessIdentity(InstallCase):
+    def test_env_wins_over_flag_and_says_so(self):
+        os.environ["SKILLGRAM_HARNESS"] = "codex"
+        got = skillgram.resolve_harness("claude")
+        self.assertEqual((got["name"], got["source"]), ("codex", "env"))
+        self.assertIn("wins", got["note"])
+
+    def test_flag_used_when_env_is_absent(self):
+        got = skillgram.resolve_harness("claude")
+        self.assertEqual((got["name"], got["source"]), ("claude-code", "flag"))
+
+    def test_process_tree_is_the_last_resort(self):
+        skillgram.process_chain = lambda limit=6: ["explorer.exe", "Cursor.exe"]
+        self.assertEqual(skillgram.resolve_harness(None)["name"], "cursor")
+
+    def test_unknown_is_reported_never_guessed(self):
+        skillgram.process_chain = lambda limit=6: ["node.exe", "python.exe"]
+        got = skillgram.resolve_harness(None)
+        self.assertEqual((got["name"], got["source"]), ("unknown", "unknown"))
+
+    def test_aliases_normalize(self):
+        for raw, want in (("Claude", "claude-code"), ("gemini", "gemini-cli"), ("qwen", "qwen-code")):
+            self.assertEqual(skillgram.normalize_harness(raw), want)
+
+
+class TestMcpDelegation(InstallCase):
+    def launch(self):
+        return ["py", "skillgram.py", "mcp"]
+
+    def envs(self):
+        return ["SKILLGRAM_HARNESS=codex", "SKILLGRAM_HUB=C:/hub"]
+
+    def test_reasonix_uses_the_positional_form_and_dashed_env(self):
+        argv = skillgram.mcp_add_argv("reasonix", "skillgram", self.launch(), self.envs())
+        self.assertEqual(argv[2:4], ["add", "skillgram"])
+        self.assertIn("--env=SKILLGRAM_HARNESS=codex", argv)
+        self.assertNotIn("--", argv)  # the legacy form rejects a separator
+
+    def test_codex_and_claude_use_the_separator(self):
+        codex = skillgram.mcp_add_argv("codex", "skillgram", self.launch(), self.envs())
+        self.assertEqual(codex[-4:], ["--", "py", "skillgram.py", "mcp"])
+        self.assertIn("--env", codex)
+        claude = skillgram.mcp_add_argv("claude", "skillgram", self.launch(), self.envs())
+        self.assertEqual(claude[-4:], ["--", "py", "skillgram.py", "mcp"])
+        self.assertIn("user", claude)
+
+    def test_hermes_takes_command_and_args(self):
+        argv = skillgram.mcp_add_argv("hermes", "skillgram", self.launch(), self.envs())
+        self.assertEqual(argv[argv.index("--command"):], ["--command", "py", "--args", "skillgram.py", "mcp"])
+
+    def test_register_is_idempotent(self):
+        hub = skillgram.Hub(self.hub_root)
+        cli = FakeCli()
+        first = skillgram.register_mcp(hub, "codex", apply=True, runner=cli)
+        self.assertEqual(first["state"], "registered")
+        self.assertEqual(len(cli.adds()), 1)
+        self.assertIn("SKILLGRAM_HARNESS=codex", cli.add_argv)
+        second = skillgram.register_mcp(hub, "codex", apply=True, runner=cli)
+        self.assertEqual(second["state"], "already")
+        self.assertNotIn("note", second)
+        self.assertEqual(len(cli.adds()), 1)
+
+    def test_dry_run_never_registers(self):
+        got = skillgram.register_mcp(skillgram.Hub(self.hub_root), "codex", apply=False, runner=FakeCli())
+        self.assertEqual(got["state"], "planned")
+        self.assertTrue(got["command"])
+        self.assertEqual(got.get("exit"), None)
+
+    def test_a_server_pointing_elsewhere_is_flagged(self):
+        cli = FakeCli(point_elsewhere=True)
+        cli.registered = True
+        got = skillgram.register_mcp(skillgram.Hub(self.hub_root), "codex", apply=True, runner=cli)
+        self.assertEqual(got["state"], "already")
+        self.assertIn("mcp remove", got["note"])
+
+    def test_harness_without_mcp_cli_says_what_to_do(self):
+        got = skillgram.register_mcp(skillgram.Hub(self.hub_root), "cursor", apply=True, runner=FakeCli())
+        self.assertEqual(got["state"], "unsupported")
+        self.assertIn("Settings > MCP", got["detail"])
+
+    def test_missing_cli_is_reported_not_faked(self):
+        skillgram._which = lambda name: None
+        got = skillgram.register_mcp(skillgram.Hub(self.hub_root), "hermes", apply=True, runner=FakeCli())
+        self.assertEqual(got["state"], "not-installed")
+
+    def test_launch_never_picks_a_script_or_shim(self):
+        os.environ.pop("SKILLGRAM_MCP_CMD", None)
+        local = self.tmp / "skillgram.py"
+        local.write_text("", encoding="utf-8")
+        skillgram._which = lambda name: str(local)
+        argv = skillgram.mcp_launch_argv()
+        self.assertEqual(argv[1], str(Path(skillgram.__file__).resolve()))
+        self.assertEqual(argv[-1], "mcp")
+
+    def test_launch_prefers_an_installed_console_script(self):
+        os.environ.pop("SKILLGRAM_MCP_CMD", None)
+        exe = self.tmp / "skillgram.exe"
+        exe.write_text("", encoding="utf-8")
+        skillgram._which = lambda name: str(exe)
+        self.assertEqual(skillgram.mcp_launch_argv(), [str(exe), "mcp"])
+
+
+class TestLedgerAndDiscovery(InstallCase):
+    def test_ledger_roundtrip_under_the_env_path(self):
+        self.assertEqual(skillgram.ledger_path(), self.ledger)
+        self.assertEqual(skillgram.read_ledger()["repos"], {})
+        data = skillgram.read_ledger()
+        data["repos"]["c:/repo"] = {"harness": "codex", "at": "now"}
+        skillgram.write_ledger(data)
+        self.assertIn("c:/repo", skillgram.read_ledger()["repos"])
+
+    def test_discovery_finds_nested_repos_and_skips_noise(self):
+        root = self.tmp / "repos"
+        (root / ".git").mkdir(parents=True)
+        (root / "a" / "b" / ".git").mkdir(parents=True)
+        (root / "node_modules" / "junk" / ".git").mkdir(parents=True)
+        (root / "a" / "deep" / "deeper" / ".git").mkdir(parents=True)
+        found = [str(p) for p in skillgram.discover_repos(root, depth=2)]
+        self.assertIn(str(root.resolve()), found)
+        self.assertIn(str((root / "a" / "b").resolve()), found)
+        self.assertFalse(any("node_modules" in p for p in found))
+        self.assertFalse(any("deeper" in p for p in found))  # beyond depth
+
+
+class TestInstall(InstallCase):
+    def test_install_unknown_harness_stops_loudly(self):
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        cli = FakeCli()
+        res = skillgram.install(skillgram.Hub(self.hub_root), apply=True, runner=cli)
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["harness"]["name"], "unknown")
+        self.assertEqual(cli.calls, [])
+        self.assertTrue(any("--harness" in item for item in res["blocked"]))
+
+    def test_install_creates_the_hub_when_missing(self):
+        hub_root = self.tmp / "fresh-hub"
+        res = skillgram.install(skillgram.Hub(hub_root), harness="codex", apply=True, runner=FakeCli())
+        self.assertTrue(hub_root.is_dir())
+        self.assertIn("created", " ".join(res["done"]))
+        self.assertFalse(res["ok"])  # empty hub: it says so instead of pretending
+
+    def test_dry_run_writes_nothing(self):
+        hub_root = self.tmp / "fresh-hub"
+        cli = FakeCli()
+        repo = self.make_repo()  # noqa: F841 - the hub gets the skill
+        (self.home / ".codex" / "skills").mkdir(parents=True)
+        res = skillgram.install(skillgram.Hub(self.hub_root), harness="codex", root=str(repo),
+                                apply=False, runner=cli)
+        self.assertFalse(res["applied"])
+        self.assertEqual(cli.adds(), [])
+        self.assertFalse(self.ledger.exists())
+        self.assertTrue(any("would mount" in item for item in res["done"]))
+        self.assertFalse((repo / ".codex" / "skills" / "deploy").exists())
+        self.assertFalse((repo / "AGENTS.md").exists())
+        self.assertFalse(hub_root.exists())
+
+    def test_install_registers_then_reports_already(self):
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        cli = FakeCli()
+        first = skillgram.install(skillgram.Hub(self.hub_root), harness="codex", apply=True, runner=cli)
+        self.assertTrue(any("registered" in item for item in first["done"]))
+        self.assertIn("Codex:", " ".join(first["effect"]))
+        second = skillgram.install(skillgram.Hub(self.hub_root), harness="codex", apply=True, runner=cli)
+        self.assertEqual(len(cli.adds()), 1)
+        self.assertTrue(any("already registered" in item for item in second["already"]))
+
+    def test_failed_registration_is_not_ok(self):
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        res = skillgram.install(skillgram.Hub(self.hub_root), harness="codex", apply=True,
+                                runner=FakeCli(add_exit=2))
+        self.assertFalse(res["ok"])
+        self.assertTrue(any("failed" in item for item in res["blocked"]))
+
+    def test_install_reports_the_effect_step(self):
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        res = skillgram.install(skillgram.Hub(self.hub_root), harness="reasonix", apply=True, runner=FakeCli())
+        self.assertIn("/reload", " ".join(res["effect"]))
+        self.assertEqual(res["mcp"]["client"], "reasonix")
+
+    @unittest.skipUnless(sys.platform == "win32", "junctions: Windows only")
+    def test_install_propagates_scope_protocol_and_ledger(self):
+        repo = self.make_repo("app")
+        (self.home / ".codex" / "skills").mkdir(parents=True)
+        cli = FakeCli()
+        res = skillgram.install(skillgram.Hub(self.hub_root), harness="codex", root=str(repo),
+                                apply=True, runner=cli)
+        self.assertTrue(res["ok"], res["blocked"])
+        self.assertTrue(skillgram.is_link(repo / ".codex" / "skills" / "deploy"))
+        agents_md = (repo / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("skillgram:protocol:begin", agents_md)
+        ledger = skillgram.read_ledger()["repos"]
+        self.assertEqual(len(ledger), 1)
+        self.assertEqual(list(ledger.values())[0]["harness"], "codex")
+        again = skillgram.install(skillgram.Hub(self.hub_root), harness="codex", root=str(repo),
+                                  apply=True, runner=cli)
+        self.assertTrue(any("already in the ledger" in item for item in again["already"]))
+        self.assertEqual(len(cli.adds()), 1)
+
+    def test_repo_without_scope_is_skipped_with_the_next_step(self):
+        repo = self.make_repo("bare", with_scope=False)
+        res = skillgram.install(skillgram.Hub(self.hub_root), harness="codex", root=str(repo),
+                                apply=False, runner=FakeCli())
+        rows = res["propagate"]["rows"]
+        self.assertEqual(rows[0]["status"], "skipped")
+        self.assertIn("use", rows[0]["reason"])
+
+
+class TestPropagate(InstallCase):
+    def test_needs_a_harness(self):
+        repo = self.make_repo()
+        res = skillgram.propagate(skillgram.Hub(self.hub_root), root=str(repo), apply=False)
+        self.assertFalse(res["ok"])
+        self.assertIn("harness", res["error"])
+
+    def test_root_must_exist_and_hold_repos(self):
+        empty = self.tmp / "empty"
+        empty.mkdir()
+        res = skillgram.propagate(skillgram.Hub(self.hub_root), harness="codex", root=str(empty), apply=False)
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["repos_found"], 0)
+
+    def test_ledger_is_skipped_unless_forced(self):
+        a = self.make_repo("a")
+        b = self.make_repo("b")
+        hub = skillgram.Hub(self.hub_root)
+        data = skillgram.read_ledger()
+        data["repos"][skillgram._ledger_key(a)] = {"harness": "codex", "at": "now"}
+        skillgram.write_ledger(data)
+        res = skillgram.propagate(hub, harness="codex", root=str(self.tmp / "repos"), apply=False)
+        self.assertEqual(res["repos_found"], 2)
+        self.assertEqual(res["ledger_skipped"], 1)
+        self.assertEqual([Path(r["repo"]).name for r in res["rows"]], ["b"])
+        forced = skillgram.propagate(hub, harness="codex", root=str(self.tmp / "repos"), apply=False, force=True)
+        self.assertEqual(forced["ledger_skipped"], 0)
+        self.assertEqual(len(forced["rows"]), 2)
+
+    @unittest.skipUnless(sys.platform == "win32", "junctions: Windows only")
+    def test_apply_records_the_ledger(self):
+        repo = self.make_repo("c")
+        (self.home / ".codex" / "skills").mkdir(parents=True)
+        res = skillgram.propagate(skillgram.Hub(self.hub_root), harness="codex",
+                                  root=str(self.tmp / "repos"), apply=True)
+        self.assertTrue(res["applied"])
+        self.assertEqual(res["recorded"], 1)
+        self.assertTrue(self.ledger.is_file())
+        self.assertEqual(res["rows"][0]["status"], "mounted")
+
+    def test_the_hub_itself_is_never_a_target(self):
+        (self.hub_root / ".git").mkdir()
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        res = skillgram.propagate(skillgram.Hub(self.hub_root), harness="codex",
+                                  root=str(self.hub_root), apply=False)
+        self.assertEqual(res["rows"], [])
+        self.assertEqual(res["ignored_hub"], [str(self.hub_root.resolve())])
+
+
 if __name__ == "__main__":
     unittest.main()

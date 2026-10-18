@@ -32,6 +32,19 @@ Keep it that way unless there is a hard reason not to.
     python skillgram.py doctor --json
     python skillgram.py status --json
     python skillgram.py onboard --no-llm --json
+    python skillgram.py install --dry-run
+
+## 1.1 additions
+
+- `install` (harness -> hub -> MCP -> propagate, idempotent) and `propagate`
+  (git repo discovery + `~/.agents/skillgram-ledger.json`).
+- The MCP server is registered **only** through the harness CLI
+  (`reasonix|codex|claude|hermes|gemini mcp add`). Never edit a harness config
+  by hand, and keep the argv shapes in `mcp_add_argv` as they are: they were
+  checked against the real CLIs.
+- Harness identity order is fixed: `SKILLGRAM_HARNESS` -> `--harness` -> process
+  tree -> `unknown`. Never extend `PROCESS_HARNESS` with a generic runtime
+  (`node`, `python`).
 
 ## 0.5 additions
 
