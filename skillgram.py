@@ -71,7 +71,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "0.9.0"
+VERSION = "1.0.0"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto

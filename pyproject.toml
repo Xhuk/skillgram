@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skillgram"
-version = "0.9.0"
+version = "1.0.0"
 description = "One skill hub for every coding agent: link a single SKILL.md library into Claude Code, Codex, Cursor, Hermes, Reasonix and any harness that reads skills."
 readme = "README.md"
 requires-python = ">=3.9"
