@@ -366,3 +366,11 @@ these remain open by decision:
 7. **No scheduled review.** `review` is manual; there is no cadence, cron or
    notification when a project's set goes stale.
 8. **MCP is tools-only.** No `resources`, no `prompts`, no sampling.
+## Language
+
+Everything user-facing is **English**: the CLI output, error messages and every
+JSON key (`promoted`, `already_present`, `missing_links`, `native`, `collisions`,
+`signals`, `selection`, ...). That is the API other tools read.
+
+Internal code comments and docstrings are still partly Spanish; translating them is
+tracked as cleanup, not as behaviour.

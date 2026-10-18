@@ -134,22 +134,22 @@ class TestProjectScope(HomeCase):
         skillgram.init_project("proj", str(proj))
 
         res = skillgram.promote(hub, ["deploy"], proj)
-        self.assertEqual(res["creadas"], ["deploy"])
+        self.assertEqual(res["created"], ["deploy"])
         link = proj / ".agents" / "skills" / "deploy"
         self.assertTrue(skillgram.is_link(link))
         self.assertEqual(Path(skillgram.link_target(link)).resolve(), (self.hub_root / "infra-ops" / "deploy").resolve())
 
         again = skillgram.promote(hub, ["deploy"], proj)
-        self.assertEqual(again["creadas"], [])
-        self.assertEqual(again["ya_estaban"], ["deploy"])
+        self.assertEqual(again["created"], [])
+        self.assertEqual(again["already_present"], ["deploy"])
 
         st = skillgram.project_status(hub, proj)
-        self.assertEqual(st["promocionadas"], 1)
-        self.assertEqual(st["sanas"], ["deploy"])
-        self.assertEqual(st["rotas"], [])
+        self.assertEqual(st["promoted"], 1)
+        self.assertEqual(st["healthy"], ["deploy"])
+        self.assertEqual(st["broken"], [])
 
         out = skillgram.unpromote(proj, ["deploy"])
-        self.assertEqual(out["retiradas"], ["deploy"])
+        self.assertEqual(out["removed"], ["deploy"])
         self.assertFalse(os.path.lexists(link))
 
     @unittest.skipUnless(sys.platform == "win32", "junctions: Windows only")
@@ -158,7 +158,7 @@ class TestProjectScope(HomeCase):
         proj = self.tmp / "proj"
         res = skillgram.promote(hub, ["ghost"], proj)
         self.assertFalse(res["ok"])
-        self.assertEqual(res["desconocidas"], ["ghost"])
+        self.assertEqual(res["unknown"], ["ghost"])
         self.assertFalse((proj / ".agents" / "skills" / "ghost").exists())
 
 
@@ -168,17 +168,17 @@ class TestOnboard(HomeCase):
         agent = self.home / ".fakeagent" / "skills"
         make_skill(agent.parent, "skills", "native-one")
         plan = skillgram.build_onboard_plan(skillgram.Hub(self.hub_root), scope="all")
-        apps = {h["app"]: h["nativas"] for h in plan["harnesses"]}
+        apps = {h["app"]: h["native"] for h in plan["harnesses"]}
         self.assertEqual(apps.get("fakeagent"), 1)
-        self.assertEqual(plan["resumen"]["import"], 1)
+        self.assertEqual(plan["summary"]["import"], 1)
         # la categoria propuesta sale del hub (nunca inventa una nueva)
-        self.assertIn(plan["acciones"][0]["categoria"], skillgram.Hub(self.hub_root).tipos() or [skillgram.DEFAULT_CATEGORY])
+        self.assertIn(plan["actions"][0]["category"], skillgram.Hub(self.hub_root).tipos() or [skillgram.DEFAULT_CATEGORY])
 
     def test_plan_flags_conflict_with_hub(self):
         make_skill(self.hub_root, "infra-ops", "deploy")
         make_skill(self.home / ".fakeagent", "skills", "deploy")
         plan = skillgram.build_onboard_plan(skillgram.Hub(self.hub_root), scope="all")
-        self.assertEqual(plan["resumen"]["conflict"], 1)
+        self.assertEqual(plan["summary"]["conflict"], 1)
 
     def test_scope_current_filters_harness(self):
         make_skill(self.home / ".a", "skills", "one")
@@ -243,10 +243,10 @@ class TestMount(HomeCase):
         agent.mkdir(parents=True)
         skillgram.sync(skillgram.Hub(self.hub_root), quiet=True)
         res = skillgram.prune_global_links(skillgram.Hub(self.hub_root), apply=False)
-        self.assertFalse(res["aplicado"])
+        self.assertFalse(res["applied"])
         self.assertGreaterEqual(res.get("pendientes", 0), 1)
         done = skillgram.prune_global_links(skillgram.Hub(self.hub_root), apply=True)
-        self.assertTrue(done["aplicado"])
+        self.assertTrue(done["applied"])
         self.assertEqual([p for p in agent.iterdir() if skillgram.is_link(p)], [])
 
 
@@ -336,9 +336,9 @@ class TestBootstrap(HomeCase):
         (proj / "Dockerfile").write_text("x", encoding="utf-8")
         res = skillgram.bootstrap(skillgram.Hub(self.hub_root), proj, None, apply=False)
         self.assertEqual(res["op"], "bootstrap")
-        self.assertEqual(res["seleccion"], [])
-        self.assertIn("sin LLM", res["note"])
-        self.assertGreaterEqual(res["candidatas"], 1)
+        self.assertEqual(res["selection"], [])
+        self.assertIn("no LLM", res["note"])
+        self.assertGreaterEqual(res["candidates"], 1)
 
     def test_bootstrap_skips_when_scope_exists(self):
         make_skill(self.hub_root, "infra-ops", "deploy")
@@ -366,8 +366,8 @@ class TestIndex(HomeCase):
         built = skillgram.index_build(hub, path=db)
         self.assertEqual(built["skills"], 2)
         res = skillgram.index_search("docker vps", path=db)
-        self.assertEqual(res["resultados"][0]["skill"], "docker-deploy")
-        self.assertEqual(res["indexadas"], 2)
+        self.assertEqual(res["results"][0]["skill"], "docker-deploy")
+        self.assertEqual(res["indexed"], 2)
 
     def test_search_without_match(self):
         make_skill(self.hub_root, "infra-ops", "docker-deploy", "deploy docker")
@@ -375,7 +375,7 @@ class TestIndex(HomeCase):
         db = self.tmp / "idx.db"
         skillgram.index_build(hub, path=db)
         res = skillgram.index_search("hipotecario credito", path=db)
-        self.assertEqual(res["resultados"], [])
+        self.assertEqual(res["results"], [])
 
 
 class TestLifecycle(HomeCase):
@@ -401,9 +401,9 @@ class TestLifecycle(HomeCase):
     def test_review_lists_never_used(self):
         hub, proj = self._project()
         rev = skillgram.review_list(hub, proj)
-        self.assertEqual(rev["nunca_usadas"], ["deploy"])
+        self.assertEqual(rev["never_used"], ["deploy"])
         skillgram.touch_usage(proj, ["deploy"])
-        self.assertEqual(skillgram.review_list(hub, proj)["nunca_usadas"], [])
+        self.assertEqual(skillgram.review_list(hub, proj)["never_used"], [])
 
     def test_retire_moves_and_tombstones(self):
         hub, _proj = self._project()
@@ -437,13 +437,13 @@ class TestExportImport(HomeCase):
         other_root.mkdir()
         other = skillgram.Hub(other_root)
         pre = skillgram.import_hub(other, out, apply=False)
-        self.assertEqual(pre["importadas"], ["deploy"])
+        self.assertEqual(pre["imported"], ["deploy"])
         self.assertFalse((other_root / "infra-ops" / "deploy").exists())
         done = skillgram.import_hub(other, out, apply=True)
-        self.assertEqual(done["importadas"], ["deploy"])
+        self.assertEqual(done["imported"], ["deploy"])
         self.assertTrue((other_root / "infra-ops" / "deploy" / "SKILL.md").is_file())
         again = skillgram.import_hub(other, out, apply=True)
-        self.assertEqual(again["ya_existian"], ["deploy"])
+        self.assertEqual(again["already_present"], ["deploy"])
 
 
 class TestMcp(HomeCase):

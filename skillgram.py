@@ -71,7 +71,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto
@@ -201,7 +201,7 @@ class Plan:
 
     def summary(self) -> dict:
         return {
-            "faltan": len(self.missing),
+            "missing": len(self.missing),
             "mal_apuntados": len(self.wrong),
             "muertos": len(self.dead),
             "omitidos": len(self.skipped),
@@ -215,7 +215,7 @@ def is_link(path) -> bool:
     """Un enlace nuestro: symlink o junction.
 
     Ojo: en Windows `os.DirEntry.is_symlink()` devuelve False para las junctions
-    (son reparse points, pero no symlinks). Si solo se mira eso, los 21 mil enlaces
+    (son reparse points, pero no symlinks). Si solo se mira eso, los 21 mil links
     se leen como carpetas reales y el drift deja de detectarse.
     """
     try:
@@ -247,7 +247,7 @@ def link_target(path: Path) -> Path | None:
 def plan(hub: Hub, agents: list[Path] | None = None, deep: bool = False) -> Plan:
     """Calcula el drift sin tocar nada.
 
-    RÃ¡pido por defecto: **un `scandir` por agente** y `readlink` sÃ³lo en los enlaces que
+    RÃ¡pido por defecto: **un `scandir` por agente** y `readlink` sÃ³lo en los links que
     sobran. AsÃ­ `status` responde en milisegundos y el LED de edgePass puede sondearlo
     cada 5 s sin castigar la mÃ¡quina (con el chequeo completo tardaba 3.3 s porque hacÃ­a
     21 mil `readlink`).
@@ -263,7 +263,7 @@ def plan(hub: Hub, agents: list[Path] | None = None, deep: bool = False) -> Plan
 
     for agent in agents:
         is_hub = agent.resolve() == hub_root
-        counts = {"tipos": 0, "planas": 0, "arregladas": 0, "muertas": 0, "omitidas": 0}
+        counts = {"tipos": 0, "planas": 0, "arregladas": 0, "dead": 0, "omitidas": 0}
         expected: dict[str, Path] = {}
         if not is_hub:
             for tipo in tipos:
@@ -302,16 +302,16 @@ def plan(hub: Hub, agents: list[Path] | None = None, deep: bool = False) -> Plan
                             result.wrong.append((link, target))
                         else:
                             counts["omitidas"] += 1
-                            result.skipped.append((link, "el destino no existe en el hub"))
+                            result.skipped.append((link, "the link target does not exist in the hub"))
                 continue
             if not target.exists():
                 counts["omitidas"] += 1
-                result.skipped.append((link, "el destino no existe en el hub"))
+                result.skipped.append((link, "the link target does not exist in the hub"))
                 continue
             result.missing.append((link, target))
             counts["tipos" if name in tipos and not is_hub else "planas"] += 1
 
-        # 2) enlaces nuestros que ya no aplican (skill borrada, renombrada o manzana retirada)
+        # 2) links nuestros que ya no aplican (skill borrada, renombrada o manzana removed)
         for name in sorted(links - set(expected)):
             link = agent / name
             target = link_target(link)
@@ -325,7 +325,7 @@ def plan(hub: Hub, agents: list[Path] | None = None, deep: bool = False) -> Plan
                 inside = False
             if inside:
                 result.dead.append(link)
-                counts["muertas"] += 1
+                counts["dead"] += 1
 
         result.by_agent[str(agent)] = counts
     return result
@@ -394,13 +394,13 @@ def apply_plan(p: Plan, quiet: bool = False) -> dict:
     report = {
         "creados": created,
         "arreglados": fixed,
-        "retirados": removed,
+        "removed": removed,
         "omitidos": len(p.skipped),
         "drift_antes": p.drift,
     }
     if not quiet:
         log(
-            f"sync: +{created} creados, ~{fixed} arreglados, -{removed} retirados, "
+            f"sync: +{created} creados, ~{fixed} arreglados, -{removed} removed, "
             f"{len(p.skipped)} omitidos (drift era {p.drift})"
         )
     return report
@@ -568,7 +568,7 @@ def init_project(name: str | None = None, path: str | None = None, force: bool =
             "op": "init",
             "project": str(proj),
             "config": str(cfg),
-            "error": f"ya existe {cfg} (project_name={existing}); usa --force para reemplazar",
+            "error": f"already exists: {cfg} (project_name={existing}); use --force to replace",
         }
     cfg.parent.mkdir(parents=True, exist_ok=True)
     payload = {"project_name": (name or _project_name(proj)).strip(), "hub": str(default_hub())}
@@ -633,9 +633,9 @@ def promote(hub: Hub, names: list[str], project: Path) -> dict:
         "op": "use",
         "project": str(project),
         "project_name": manifest["project_name"],
-        "creadas": created,
-        "ya_estaban": already,
-        "desconocidas": unknown,
+        "created": created,
+        "already_present": already,
+        "unknown": unknown,
         "ocupadas_sin_enlace": occupied,
         "manifest": str(project_dir(project) / PROJECT_MANIFEST),
     }
@@ -661,13 +661,13 @@ def unpromote(project: Path, names: list[str]) -> dict:
         "ok": True,
         "op": "unuse",
         "project": str(project),
-        "retiradas": removed,
-        "no_estaban": absent,
+        "removed": removed,
+        "absent": absent,
     }
 
 
 def project_status(hub: Hub, project: Path) -> dict:
-    """Salud del scope de proyecto: enlaces vivos, hash vs hub, y enlaces sin registrar."""
+    """Salud del scope de proyecto: links vivos, hash vs hub, y unregistered links."""
     known = hub.skills()
     manifest = _read_manifest(project)
     links_dir = project_dir(project) / PROJECT_SKILLS
@@ -681,7 +681,7 @@ def project_status(hub: Hub, project: Path) -> dict:
         dest = links_dir / name
         tipo = known.get(name)
         if not tipo:
-            unlinked.append(f"{name}: ya no existe en el hub")
+            unlinked.append(f"{name}: no longer exists in the hub")
             continue
         src = hub.root / tipo / name
         if not is_link(dest):
@@ -718,23 +718,23 @@ def project_status(hub: Hub, project: Path) -> dict:
         "project": str(project),
         "project_name": manifest.get("project_name"),
         "tiene_config": bool(project_config_name(project)),
-        "promocionadas": len(registered),
-        "sanas": ok,
-        "desactualizadas": stale,
-        "rotas": broken,
-        "sin_enlace": unlinked,
-        "enlaces_sin_registrar": extra,
-        "duplicadas_locales": duplicates,
-        "locales_propias": local_only,
+        "promoted": len(registered),
+        "healthy": ok,
+        "stale": stale,
+        "broken": broken,
+        "missing_links": unlinked,
+        "links_sin_registrar": extra,
+        "local_duplicates": duplicates,
+        "local_only": local_only,
     }
 
 
 # ---------------------------------------------------------------------------
-# Doctor: que harnesss hay, cuantas skills nativas tiene cada uno
+# Doctor: que harnesss hay, cuantas skills native tiene cada uno
 # ---------------------------------------------------------------------------
 #
 # Regla de oro: las skills NATIVAS de cada agente no se tocan. skillgram solo
-# agrega enlaces al hub. Si un agente ya tiene una skill con el mismo nombre,
+# agrega links al hub. Si un agente ya tiene una skill con el mismo nombre,
 # `sync` la saltea (nunca sobrescribe) y `doctor` la reporta como colision.
 
 HARNESS_HOMES = {
@@ -789,7 +789,7 @@ def detect_harnesses() -> list:
 
 
 def doctor(hub: Hub) -> dict:
-    """Inventario read-only: enlaces, muertas, faltantes, nativas y colisiones."""
+    """Inventario read-only: links, dead, missingtes, native y collisions."""
     known = hub.skills()
     rows = []
     for agent_dir in hub.agents():
@@ -812,22 +812,22 @@ def doctor(hub: Hub) -> dict:
         rows.append({
             "path": str(agent_dir),
             "app": agent_dir.parent.name,
-            "enlaces_al_hub": links,
-            "muertas": dead,
-            "faltantes": len([n for n in known if n not in present]),
-            "nativas": natives,
-            "colisiones": sorted(collisions),
+            "links_al_hub": links,
+            "dead": dead,
+            "missingtes": len([n for n in known if n not in present]),
+            "native": natives,
+            "collisions": sorted(collisions),
         })
 
     recos = []
-    if any(r["faltantes"] or r["muertas"] for r in rows):
-        recos.append("corre `sync` para crear los enlaces faltantes y retirar los muertos")
-    nat = sum(r["nativas"] for r in rows)
+    if any(r["missingtes"] or r["dead"] for r in rows):
+        recos.append("run `sync` to create missing links and drop dead ones")
+    nat = sum(r["native"] for r in rows)
     if nat:
-        recos.append(f"{nat} skills nativas de agentes: quedan como estan, skillgram no las toca")
-    col = sum(len(r["colisiones"]) for r in rows)
+        recos.append(f"{nat} skills native de agentes: quedan como estan, skillgram no las toca")
+    col = sum(len(r["collisions"]) for r in rows)
     if col:
-        recos.append(f"{col} colisiones de nombre: `sync` las saltea (nunca sobrescribe)")
+        recos.append(f"{col} collisions de nombre: `sync` las saltea (nunca sobrescribe)")
     if not known:
         recos.append(f"el hub {hub.root} esta vacio: agrega <tipo>/<skill>/SKILL.md")
 
@@ -929,7 +929,7 @@ def _skill_summary(skill_dir: Path, limit: int = 400) -> str:
 
 
 def harness_inventory(hub: Hub, only: str | None = None) -> list:
-    """Skills nativas (reales) por harness, con hash y descripcion corta."""
+    """Skills native (reales) por harness, con hash y descripcion corta."""
     known = hub.skills()
     hub_paths = {name: hub.root / tipo / name for name, tipo in known.items()}
     rows = []
@@ -957,8 +957,8 @@ def harness_inventory(hub: Hub, only: str | None = None) -> list:
             {
                 "app": app,
                 "skills_dir": str(agent_dir),
-                "enlaces_al_hub": links,
-                "nativas": natives,
+                "links_al_hub": links,
+                "native": natives,
             }
         )
     return rows
@@ -996,22 +996,22 @@ def build_onboard_plan(hub: Hub, scope: str = "all", harness: str | None = None)
     seen: dict = {}
     actions = []
     for row in inv:
-        for nat in row["nativas"]:
+        for nat in row["native"]:
             action = {
                 "skill": nat["name"],
                 "harness": row["app"],
                 "from": nat["path"],
                 "hash": nat["hash"],
-                "categoria": _heuristic_category(nat["name"], categories),
-                "accion": "import",
-                "motivo": "",
+                "category": _heuristic_category(nat["name"], categories),
+                "action": "import",
+                "reason": "",
             }
             if nat["hash"] in seen:
-                action["accion"] = "dedupe"
+                action["action"] = "dedupe"
                 action["motivo"] = f"identica a {seen[nat['hash']]}"
             elif nat["in_hub"]:
-                action["accion"] = "conflict"
-                action["motivo"] = "ya existe una skill con ese nombre en el hub"
+                action["action"] = "conflict"
+                action["motivo"] = "a skill with that name already exists in the hub"
             seen.setdefault(nat["hash"], f"{row['app']}/{nat['name']}")
             actions.append(action)
     return {
@@ -1019,12 +1019,12 @@ def build_onboard_plan(hub: Hub, scope: str = "all", harness: str | None = None)
         "hub": str(hub.root),
         "scope": scope,
         "harness": harness,
-        "harnesses": [{"app": r["app"], "nativas": len(r["nativas"]), "skills_dir": r["skills_dir"]} for r in inv],
-        "acciones": actions,
-        "resumen": {
-            "import": sum(1 for a in actions if a["accion"] == "import"),
-            "dedupe": sum(1 for a in actions if a["accion"] == "dedupe"),
-            "conflict": sum(1 for a in actions if a["accion"] == "conflict"),
+        "harnesses": [{"app": r["app"], "native": len(r["native"]), "skills_dir": r["skills_dir"]} for r in inv],
+        "actions": actions,
+        "summary": {
+            "import": sum(1 for a in actions if a["action"] == "import"),
+            "dedupe": sum(1 for a in actions if a["action"] == "dedupe"),
+            "conflict": sum(1 for a in actions if a["action"] == "conflict"),
         },
     }
 
@@ -1049,7 +1049,7 @@ def llm_refine_plan(hub: Hub, plan: dict, cfg: dict) -> dict:
             "current_category": a["categoria"],
             "summary": _skill_summary(Path(a["from"])),
         }
-        for a in plan["acciones"]
+        for a in plan["actions"]
     ]
     if not items:
         return plan
@@ -1067,7 +1067,7 @@ def llm_refine_plan(hub: Hub, plan: dict, cfg: dict) -> dict:
     except ValueError as exc:
         plan["llm_error"] = f"JSON invalido: {exc}"
         return plan
-    index = {(a["skill"], a["harness"]): a for a in plan["acciones"]}
+    index = {(a["skill"], a["harness"]): a for a in plan["actions"]}
     applied = 0
     for item in data.get("skills", []):
         key = (str(item.get("name", "")).strip(), str(item.get("harness", "")).strip())
@@ -1081,8 +1081,8 @@ def llm_refine_plan(hub: Hub, plan: dict, cfg: dict) -> dict:
         if flavor:
             action["flavor"] = flavor
         dup = str(item.get("duplicate_of", "")).strip()
-        if dup and dup != action["skill"] and action["accion"] == "import":
-            action["accion"] = "dedupe"
+        if dup and dup != action["skill"] and action["action"] == "import":
+            action["action"] = "dedupe"
             action["motivo"] = f"la LLM dice que es lo mismo que {dup}"
         if item.get("reason"):
             action["motivo"] = action["motivo"] or str(item["reason"])[:200]
@@ -1094,14 +1094,14 @@ def llm_refine_plan(hub: Hub, plan: dict, cfg: dict) -> dict:
 def apply_onboard(hub: Hub, plan: dict) -> dict:
     """Importa al hub: copia, verifica hash y recien ahi reemplaza por link."""
     imported, skipped, failed = [], [], []
-    for action in plan["acciones"]:
-        if action["accion"] != "import":
-            skipped.append(f"{action['harness']}/{action['skill']} ({action['accion']})")
+    for action in plan["actions"]:
+        if action["action"] != "import":
+            skipped.append(f"{action['harness']}/{action['skill']} ({action['action']})")
             continue
         src = Path(action["from"])
         dest = hub.root / action["categoria"] / action["skill"]
         if dest.exists():
-            failed.append(f"{action['skill']}: ya existe {dest}")
+            failed.append(f"{action['skill']}: already exists: {dest}")
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -1118,7 +1118,7 @@ def apply_onboard(hub: Hub, plan: dict) -> dict:
 
 
 def replace_native_with_link(hub: Hub, imported: list, quarantine: Path) -> dict:
-    """Reemplaza la copia nativa por un junction al hub (la copia va a cuarentena).
+    """Reemplaza la copia nativa por un junction al hub (la copia va a quarantine).
 
     Solo se llama con --replace-natives. El contenido ya esta verificado en el hub
     (mismo hash), y la copia original se mueve a <quarantine>/<harness>/<skill>:
@@ -1140,14 +1140,14 @@ def replace_native_with_link(hub: Hub, imported: list, quarantine: Path) -> dict
             shutil.move(str(src), str(target))
             moved.append(str(target))
         except OSError as exc:
-            failed.append(f"{item['skill']}: no pude mover a cuarentena ({exc})")
+            failed.append(f"{item['skill']}: could not move to quarantine ({exc})")
             continue
         _run_batch([f'mklink /J "{src}" "{dest}"'])
         if os.path.lexists(src):
             linked.append(str(src))
         else:
-            failed.append(f"{item['skill']}: cuarentena ok pero fallo el link")
-    return {"cuarentena": moved, "enlaces": linked, "fallos": failed}
+            failed.append(f"{item['skill']}: quarantine ok but the link failed")
+    return {"quarantine": moved, "links": linked, "failures": failed}
 
 def onboard(hub: Hub, scope: str = "all", harness: str | None = None, use_llm: bool = True) -> dict:
     plan = build_onboard_plan(hub, scope=scope, harness=harness)
@@ -1239,10 +1239,10 @@ def flavor_scan(hub: Hub, apply: bool = False) -> dict:
     return {
         "ok": True,
         "op": "flavor-scan",
-        "aplicado": apply,
+        "applied": apply,
         "skills": len(rows),
-        "por_flavor": counts,
-        "detalle": rows,
+        "by_flavor": counts,
+        "detail": rows,
     }
 
 
@@ -1261,7 +1261,7 @@ def port_skill(hub: Hub, name: str, to_harness: str, cfg: dict | None) -> dict:
     tipos = hub.skills()
     tipo = tipos.get(name)
     if not tipo:
-        return {"ok": False, "op": "port", "skill": name, "error": "no existe en el hub"}
+        return {"ok": False, "op": "port", "skill": name, "error": "not found in the hub"}
     d = hub.root / tipo / name
     meta = skill_meta(d)
     flavor = meta.get("flavor") or detect_flavor(d)["flavor"]
@@ -1271,7 +1271,7 @@ def port_skill(hub: Hub, name: str, to_harness: str, cfg: dict | None) -> dict:
         return {"ok": False, "op": "port", "skill": name, "error": "no hay LLM conectada configurada"}
     existing = d / AGENTS_DIR / f"{to_harness}.md"
     if existing.is_file():
-        return {"ok": True, "op": "port", "skill": name, "skipped": f"ya existe {existing}"}
+        return {"ok": True, "op": "port", "skill": name, "skipped": f"already exists: {existing}"}
     body = (d / "SKILL.md").read_text(encoding="utf-8", errors="replace")
     try:
         answer = llm_chat(cfg, PORT_SYSTEM, f"target harness: {to_harness}\n\n---\n{body[:12000]}")
@@ -1305,7 +1305,7 @@ def port_missing(hub: Hub, harnesses: list, cfg: dict | None, apply: bool = Fals
             plan.append({"skill": name, "flavor": flavor, "to": h})
             if apply:
                 done.append(port_skill(hub, name, h, cfg))
-    return {"ok": True, "op": "port-scan", "aplicado": apply, "pendientes": plan, "hechas": done}
+    return {"ok": True, "op": "port-scan", "applied": apply, "pendientes": plan, "hechas": done}
 
 
 # ---------------------------------------------------------------------------
@@ -1407,13 +1407,13 @@ def apply_precedence(hub: Hub, apply: bool = False) -> dict:
             new, changed = _prepend_toml_paths(text, hub_path)
         else:
             new, changed = _prepend_yaml_external_dirs(text, hub_path)
-        row = {"harness": app, "config": str(path), "cambiado": changed, "aplicado": False}
+        row = {"harness": app, "config": str(path), "cambiado": changed, "applied": False}
         if changed and apply:
             backup = path.with_suffix(path.suffix + f".skillgram-bak-{time.strftime('%Y%m%d-%H%M%S')}")
             try:
                 backup.write_text(text, encoding="utf-8")
                 path.write_text(new if new.endswith("\n") else new + "\n", encoding="utf-8")
-                row["aplicado"] = True
+                row["applied"] = True
                 row["backup"] = str(backup)
             except OSError as exc:
                 row["error"] = str(exc)
@@ -1422,7 +1422,7 @@ def apply_precedence(hub: Hub, apply: bool = False) -> dict:
         "ok": True,
         "op": "precedence",
         "hub": hub_path,
-        "aplicado": apply,
+        "applied": apply,
         "configs": rows,
         "cambios": sum(1 for r in rows if r.get("cambiado")),
     }
@@ -1433,7 +1433,7 @@ def apply_precedence(hub: Hub, apply: bool = False) -> dict:
 # ---------------------------------------------------------------------------
 
 def adopt_skill(hub: Hub, path: Path, quarantine_root: Path | None = None) -> dict:
-    """Adopta una skill nativa: copia al hub, verifica hash, deja link, original a cuarentena."""
+    """Adopta una skill nativa: copia al hub, verifica hash, deja link, original a quarantine."""
     src = Path(path)
     if not (src / "SKILL.md").is_file():
         return {"ok": False, "op": "adopt", "path": str(src), "error": "no es una skill (falta SKILL.md)"}
@@ -1441,7 +1441,7 @@ def adopt_skill(hub: Hub, path: Path, quarantine_root: Path | None = None) -> di
     tipo = _heuristic_category(name, hub.tipos())
     dest = hub.root / tipo / name
     if dest.exists():
-        return {"ok": False, "op": "adopt", "path": str(src), "error": f"ya existe {dest}"}
+        return {"ok": False, "op": "adopt", "path": str(src), "error": f"already exists: {dest}"}
     original_hash = skill_hash(src)
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -1460,7 +1460,7 @@ def adopt_skill(hub: Hub, path: Path, quarantine_root: Path | None = None) -> di
             shutil.rmtree(target, ignore_errors=True)
         shutil.move(str(src), str(target))
     except OSError as exc:
-        return {"ok": False, "op": "adopt", "path": str(src), "imported": str(dest), "error": f"cuarentena: {exc}"}
+        return {"ok": False, "op": "adopt", "path": str(src), "imported": str(dest), "error": f"quarantine: {exc}"}
     _run_batch([f'mklink /J "{src}" "{dest}"'])
     return {
         "ok": os.path.lexists(src),
@@ -1468,21 +1468,21 @@ def adopt_skill(hub: Hub, path: Path, quarantine_root: Path | None = None) -> di
         "skill": name,
         "tipo": tipo,
         "hub": str(dest),
-        "cuarentena": str(target),
+        "quarantine": str(target),
         "link": str(src),
     }
 
 
 def adopt_natives(hub: Hub, harnesses: list | None = None) -> dict:
-    """Adopta todas las skills nativas que encuentre (auto-adopcion del watch)."""
+    """Adopta todas las skills native que encuentre (auto-adopcion del watch)."""
     done, failed = [], []
     for row in harness_inventory(hub):
         if harnesses and row["app"] not in harnesses:
             continue
-        for nat in row["nativas"]:
+        for nat in row["native"]:
             res = adopt_skill(hub, Path(nat["path"]))
             (done if res.get("ok") else failed).append(res)
-    return {"ok": not failed, "op": "adopt-all", "adoptadas": done, "fallidas": failed}
+    return {"ok": not failed, "op": "adopt-all", "adoptadas": done, "failed": failed}
 
 
 # ---------------------------------------------------------------------------
@@ -1577,13 +1577,13 @@ def mount_project(hub: Hub, project: Path, apply: bool = False, prune_global: bo
                     "harness": app,
                     "dir": str(target_dir),
                     "creados": created,
-                    "ya_estaban": kept,
-                    "retirados": removed,
+                    "already_present": kept,
+                    "removed": removed,
                     "nativos_sin_tocar": skipped,
                 }
             )
 
-    pruned = {"harness": None, "retirados": []}
+    pruned = {"harness": None, "removed": []}
     if prune_global:
         pruned = prune_global_links(hub, apply=apply)
     return {
@@ -1592,14 +1592,14 @@ def mount_project(hub: Hub, project: Path, apply: bool = False, prune_global: bo
         "project": str(project),
         "project_name": scope["project_name"],
         "skills": len(wanted),
-        "aplicado": apply,
+        "applied": apply,
         "harnesses": rows,
         "global": pruned,
     }
 
 
 def prune_global_links(hub: Hub, apply: bool = False) -> dict:
-    """Retira de los homes los enlaces al hub: strict project-only."""
+    """Retira de los homes los links al hub: strict project-only."""
     if not apply:
         total = 0
         for agent_dir in hub.agents():
@@ -1608,7 +1608,7 @@ def prune_global_links(hub: Hub, apply: bool = False) -> dict:
                     tgt = link_target(entry)
                     if tgt and _under(Path(tgt), hub.root):
                         total += 1
-        return {"harness": "*", "retirados": [], "pendientes": total, "aplicado": False}
+        return {"harness": "*", "removed": [], "pendientes": total, "applied": False}
     removed = 0
     for agent_dir in hub.agents():
         for entry in list(agent_dir.iterdir()):
@@ -1617,10 +1617,10 @@ def prune_global_links(hub: Hub, apply: bool = False) -> dict:
             tgt = link_target(entry)
             if tgt and _under(Path(tgt), hub.root) and _remove_junction(entry):
                 removed += 1
-    return {"harness": "*", "retirados": [f"{removed} enlaces"], "aplicado": True}
+    return {"harness": "*", "removed": [f"{removed} links"], "applied": True}
 
 # ---------------------------------------------------------------------------
-# Bootstrap: repo sin scope -> senales -> candidatas -> seleccion LLM -> registro
+# Bootstrap: repo sin scope -> signals -> candidates -> selection LLM -> registro
 # ---------------------------------------------------------------------------
 #
 # Uso de LLM: explicito y auditado. Solo decide el set inicial, porta flavor y
@@ -1701,7 +1701,7 @@ def repo_signals(project: Path) -> dict:
 
 
 def candidate_skills(hub: Hub, signals: dict, limit: int = 60) -> list:
-    """Filtro determinista del catalogo: 900 -> ~60 candidatas."""
+    """Filtro determinista del catalogo: 900 -> ~60 candidates."""
     toks = signals["tags"]
     rows = []
     for name, tipo in hub.skills().items():
@@ -1739,7 +1739,7 @@ def llm_select(cfg: dict, project: Path, signals: dict, candidates: list) -> dic
         if name in known:
             selected.append({"skill": name, "why": str(item.get("why", ""))[:140]})
     gaps = [str(g)[:160] for g in (data.get("gaps") or [])][:5]
-    return {"selected": selected, "gaps": gaps, "descartadas": len(candidates) - len(selected)}
+    return {"selected": selected, "gaps": gaps, "skipped": len(candidates) - len(selected)}
 
 
 def bootstrap(hub: Hub, project: Path, cfg: dict | None, apply: bool = False) -> dict:
@@ -1755,23 +1755,23 @@ def bootstrap(hub: Hub, project: Path, cfg: dict | None, apply: bool = False) ->
         "op": "bootstrap",
         "project": str(project),
         "signals": signals,
-        "candidatas": len(candidates),
-        "seleccion": [],
+        "candidates": len(candidates),
+        "selection": [],
         "gaps": [],
-        "aplicado": False,
+        "applied": False,
         "llm": cfg["model"] if cfg else None,
     }
     if not cfg:
-        result["note"] = "sin LLM conectada: solo candidatas (no se elige set)"
-        result["top_candidatas"] = [c["skill"] for c in candidates[:12]]
+        result["note"] = "no LLM configured: candidates only (no set is chosen)"
+        result["top_candidates"] = [c["skill"] for c in candidates[:12]]
         return result
     selection = llm_select(cfg, project, signals, candidates)
     llm_log("bootstrap-select", {"project": str(project), "selected": [s["skill"] for s in selection["selected"]],
-                                 "gaps": selection["gaps"], "candidatas": len(candidates)}, cfg["model"])
+                                 "gaps": selection["gaps"], "candidates": len(candidates)}, cfg["model"])
     result.update({
-        "seleccion": selection["selected"],
+        "selection": selection["selected"],
         "gaps": selection["gaps"],
-        "descartadas": selection["descartadas"],
+        "skipped": selection["skipped"],
     })
     if apply and selection["selected"]:
         names = [s["skill"] for s in selection["selected"]]
@@ -1784,8 +1784,8 @@ def bootstrap(hub: Hub, project: Path, cfg: dict | None, apply: bool = False) ->
                 entry["by"] = f"llm:{cfg['model']}"
         manifest["bootstrap_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
         _write_manifest(project, manifest)
-        result["aplicado"] = True
-        result["registradas"] = res["creadas"] + res["ya_estaban"]
+        result["applied"] = True
+        result["registradas"] = res["created"] + res["ya_estaban"]
     return result
 
 
@@ -1853,7 +1853,7 @@ def propose_skill(hub: Hub, project: Path, need: str, cfg: dict | None, apply: b
         "valida": ok_front,
         "caracteres": len(draft),
         "llm": cfg["model"],
-        "aplicado": False,
+        "applied": False,
     }
     if not ok_front:
         result["error"] = "el borrador no tiene frontmatter valido (name + description)"
@@ -1861,7 +1861,7 @@ def propose_skill(hub: Hub, project: Path, need: str, cfg: dict | None, apply: b
         return result
     if name in hub.skills():
         result["ok"] = False
-        result["error"] = f"ya existe una skill llamada {name} en el hub"
+        result["error"] = f"a skill named this already exists: {name} en el hub"
         return result
     if not apply:
         result["draft_head"] = draft[:600]
@@ -1880,8 +1880,8 @@ def propose_skill(hub: Hub, project: Path, need: str, cfg: dict | None, apply: b
         entry["by"] = f"llm:{cfg['model']}"
     _write_manifest(project, manifest)
     llm_log("propose-skill", {"skill": name, "tipo": tipo, "need": need[:200], "project": str(project)}, cfg["model"])
-    result.update({"ok": True, "aplicado": True, "tipo": tipo, "hub": str(dest),
-                   "registradas": res["creadas"] + res["ya_estaban"]})
+    result.update({"ok": True, "applied": True, "tipo": tipo, "hub": str(dest),
+                   "registradas": res["created"] + res["ya_estaban"]})
     return result
 
 # ---------------------------------------------------------------------------
@@ -1949,8 +1949,8 @@ def index_search(text: str, limit: int = 10, path: Path | None = None) -> dict:
         built = conn.execute("SELECT v FROM meta WHERE k='built_at'").fetchone()
     finally:
         conn.close()
-    return {"ok": True, "op": "search", "query": text, "resultados": rows,
-            "indexadas": int(total[0]) if total else 0, "built_at": built[0] if built else None}
+    return {"ok": True, "op": "search", "query": text, "results": rows,
+            "indexed": int(total[0]) if total else 0, "built_at": built[0] if built else None}
 
 
 # ---------------------------------------------------------------------------
@@ -2010,14 +2010,14 @@ def review_list(hub: Hub, project: Path | None = None, days: int = 90) -> dict:
         if (now - ts) / 86400 >= days:
             stale.append({"skill": name, "dias": int((now - ts) / 86400), "use_count": entry.get("use_count")})
     return {"ok": True, "op": "review", "project": str(project) if project else None,
-            "umbral_dias": days, "nunca_usadas": never, "sin_uso_reciente": stale, "pinned": pinned}
+            "threshold_days": days, "never_used": never, "stale": stale, "pinned": pinned}
 
 
 def retire_skill(hub: Hub, name: str, reason: str = "") -> dict:
     """Retira una skill del hub a _retired/ y deja tombstone (nunca borra)."""
     tipo = hub.skills().get(name)
     if not tipo:
-        return {"ok": False, "op": "retire", "skill": name, "error": "no existe en el hub"}
+        return {"ok": False, "op": "retire", "skill": name, "error": "not found in the hub"}
     src = hub.root / tipo / name
     dest = hub.root / RETIRED_DIR / name
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -2069,7 +2069,7 @@ def import_hub(hub: Hub, src: Path, apply: bool = False) -> dict:
 
     src = Path(src)
     if not src.is_file():
-        return {"ok": False, "op": "import", "error": f"no existe {src}"}
+        return {"ok": False, "op": "import", "error": f"not found: {src}"}
     added, skipped, failed = [], [], []
     with tempfile.TemporaryDirectory() as tmp:
         with tarfile.open(src, "r:gz") as tar:
@@ -2095,8 +2095,8 @@ def import_hub(hub: Hub, src: Path, apply: bool = False) -> dict:
                 added.append(name)
             else:
                 added.append(name)
-    return {"ok": not failed, "op": "import", "file": str(src), "aplicado": apply,
-            "importadas": added, "ya_existian": skipped, "fallidas": failed}
+    return {"ok": not failed, "op": "import", "file": str(src), "applied": apply,
+            "imported": added, "already_present": skipped, "failed": failed}
 
 
 # ---------------------------------------------------------------------------
@@ -2145,7 +2145,7 @@ def mcp_call(hub: Hub, name: str, args: dict) -> dict:
         proj = resolve_project(args.get("project"))
         return propose_skill(hub, Path(proj["path"]), str(args.get("need", "")),
                              llm_config(), apply=bool(args.get("apply")))
-    return {"ok": False, "error": f"tool desconocida: {name}"}
+    return {"ok": False, "error": f"unknown tool: {name}"}
 
 
 def mcp_serve(hub: Hub, stdin=None, stdout=None) -> int:
@@ -2269,7 +2269,7 @@ class Watcher:
         # La base se toma ANTES del primer sync y **no** se re-lee despues: si se releyera,
         # una skill que aparezca *durante* ese sync quedaría dentro de la base sin haberse
         # enlazado, y el vigilante no volvería a mirarla hasta el siguiente cambio no
-        # relacionado (pasaba de verdad: una skill se quedaba sin enlaces).
+        # relacionado (pasaba de verdad: una skill se quedaba missing links).
         # Con la base de antes, el primer sondeo ve el cambio y sincroniza otra vez;
         # repetir un sync es idempotente, así que no cuesta nada.
         previous = hub_fingerprint(self.hub)
@@ -2367,7 +2367,7 @@ def daemon(hub: Hub, interval: float = 5.0, watch_at_start: bool = False) -> int
                 reply({"ok": True, "op": "quit"})
                 break
             else:
-                reply({"ok": False, "error": f"op desconocida: {op or '(vacia)'}"})
+                reply({"ok": False, "error": f"unknown op: {op or '(vacia)'}"})
         except Exception as exc:  # noqa: BLE001 - el daemon no debe morir por una op
             reply({"ok": False, "op": op, "error": f"{type(exc).__name__}: {exc}"})
     watcher.stop()
@@ -2422,7 +2422,7 @@ def uninstall_autostart() -> dict:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="skillgram",
-        description="Mantiene los enlaces de la biblioteca de skills en todos los agentes.",
+        description="Mantiene los links de la biblioteca de skills en todos los agentes.",
     )
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--hub", default=str(default_hub()), help="raiz del hub (default ~/.agents/skills)")
@@ -2435,7 +2435,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_onb.add_argument("--scope", choices=["all", "current"], help="unificar todos los harnesss o solo uno (si falta, pregunta)")
     p_onb.add_argument("--harness", help="nombre del harness para --scope current")
     p_onb.add_argument("--apply", action="store_true", help="ejecuta el plan (sin esto solo lo muestra)")
-    p_onb.add_argument("--replace-natives", action="store_true", help="reemplaza la copia nativa por un link (la copia va a cuarentena)")
+    p_onb.add_argument("--replace-natives", action="store_true", help="reemplaza la copia nativa por un link (la copia va a quarantine)")
     p_onb.add_argument("--no-llm", action="store_true", help="no consulta la LLM conectada")
     p_onb.add_argument("--plan", help="escribe el plan JSON en esa ruta")
     sub.add_parser("flavor", parents=[common], help="detecta el flavor (agente) de cada skill del hub").add_argument(
@@ -2447,14 +2447,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_port.add_argument("--no-llm", action="store_true")
     sub.add_parser("precedence", parents=[common], help="declara el hub primero en la config de cada harness").add_argument(
         "--apply", action="store_true", help="escribe (con backup); si falta, solo muestra")
-    p_adopt = sub.add_parser("adopt", parents=[common], help="adopta skills nativas: copia al hub, verifica hash, deja link")
+    p_adopt = sub.add_parser("adopt", parents=[common], help="adopta skills native: copia al hub, verifica hash, deja link")
     p_adopt.add_argument("path", nargs="?", help="carpeta de la skill")
-    p_adopt.add_argument("--all", action="store_true", help="todas las nativas de todos los harnesss")
+    p_adopt.add_argument("--all", action="store_true", help="todas las native de todos los harnesss")
     p_mount = sub.add_parser("mount", parents=[common], help="materializa el scope del proyecto en cada harness")
     p_mount.add_argument("--project", help="carpeta del proyecto (default: resolucion tipo engram)")
-    p_mount.add_argument("--apply", action="store_true", help="crea/retira los enlaces (si falta: solo el plan)")
-    p_mount.add_argument("--prune-global", action="store_true", help="ademas retira los enlaces al hub de los homes (strict)")
-    p_boot = sub.add_parser("bootstrap", parents=[common], help="repo sin scope: senales + LLM elige el set inicial (y reporta gaps)")
+    p_mount.add_argument("--apply", action="store_true", help="crea/retira los links (si falta: solo el plan)")
+    p_mount.add_argument("--prune-global", action="store_true", help="ademas retira los links al hub de los homes (strict)")
+    p_boot = sub.add_parser("bootstrap", parents=[common], help="repo without scope: signals + LLM picks the initial set (and reports gaps)")
     p_boot.add_argument("--project")
     p_boot.add_argument("--apply", action="store_true", help="registra el set elegido en el proyecto")
     p_boot.add_argument("--no-llm", action="store_true")
@@ -2470,7 +2470,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_srch = sub.add_parser("search", parents=[common], help="busqueda full-text en el hub")
     p_srch.add_argument("text", nargs="+")
     p_srch.add_argument("--limit", type=int, default=10)
-    p_rev = sub.add_parser("review", parents=[common], help="skills nunca usadas o sin uso reciente")
+    p_rev = sub.add_parser("review", parents=[common], help="skills never used or not used recently")
     p_rev.add_argument("--project")
     p_rev.add_argument("--days", type=int, default=90)
     p_pin = sub.add_parser("pin", parents=[common], help="marca skills del proyecto como fijas (no caducan)")
@@ -2486,7 +2486,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_imp.add_argument("file")
     p_imp.add_argument("--apply", action="store_true")
     sub.add_parser("mcp", parents=[common], help="server MCP (stdio) para que el agente consulte el hub")
-    sub.add_parser("doctor", parents=[common], help="inventario: harnesss, nativas, colisiones, drift")
+    sub.add_parser("doctor", parents=[common], help="inventario: harnesss, native, collisions, drift")
     p_status = sub.add_parser("status", parents=[common], help="drift actual sin tocar nada")
     p_status.add_argument("--verify", action="store_true", help="ademas verifica a donde apunta cada enlace (lento)")
     p_sync = sub.add_parser("sync", parents=[common], help="aplica el estado deseado (idempotente)")
@@ -2604,7 +2604,7 @@ def main(argv: list[str] | None = None) -> int:
         result = plan
         if args.apply:
             applied = apply_onboard(hub, plan)
-            replaced = {"cuarentena": [], "enlaces": [], "fallos": []}
+            replaced = {"quarantine": [], "links": [], "failures": []}
             if args.replace_natives and applied["imported"]:
                 replaced = replace_native_with_link(
                     hub, applied["imported"], HOME / ".agents" / "skillgram-quarantine"
@@ -2612,16 +2612,16 @@ def main(argv: list[str] | None = None) -> int:
             linked = sync(hub, quiet=True)
             result = {
                 **plan,
-                "aplicado": applied,
+                "applied": applied,
                 "reemplazo": replaced,
                 "sync": linked,
-                "ok": not applied["failed"] and not replaced["fallos"],
+                "ok": not applied["failed"] and not replaced["failures"],
             }
     elif args.cmd == "sync":
         result = sync(hub, quiet=args.quiet, dry_run=args.dry_run)
     elif args.cmd == "watch":
         if not hub.root.is_dir():
-            print(json.dumps({"ok": False, "error": f"no existe el hub {hub.root}"}), flush=True)
+            print(json.dumps({"ok": False, "error": f"hub not found {hub.root}"}), flush=True)
             return 2
         if not single_instance():
             print(
@@ -2673,24 +2673,24 @@ def main(argv: list[str] | None = None) -> int:
             f"scope: {p['scope']}"
             + (f" ({p['harness']})" if p.get("harness") else " (todos los harnesss)")
             + f"  | hub: {p['hub']}\n"
-            + "harnesss con skills nativas:\n"
-            + ("\n".join(f"  {h['app']:16} {h['nativas']:>4} nativas" for h in p["harnesses"] if h["nativas"])
+            + "harnesss con skills native:\n"
+            + ("\n".join(f"  {h['app']:16} {h['native']:>4} native" for h in p["harnesses"] if h["native"])
                or "  (ninguno)")
-            + f"\nplan: {p['resumen']['import']} importar | {p['resumen']['dedupe']} duplicadas | "
-            f"{p['resumen']['conflict']} en conflicto"
+            + f"\nplan: {p['summary']['import']} importar | {p['summary']['dedupe']} duplicadas | "
+            f"{p['summary']['conflict']} en conflicto"
             + (f"\nllm: {p['llm']['model']} ({p['llm']['aplicadas']} skills clasificadas)" if p.get("llm") else "\nllm: no usada")
             + (f"\nllm_error: {p['llm_error']}" if p.get("llm_error") else "")
             + "\n"
             + "\n".join(
-                f"  {a['accion']:8} {a['harness']}/{a['skill']} -> {a['categoria']}"
+                f"  {a['action']:8} {a['harness']}/{a['skill']} -> {a['category']}"
                 + (f" [{a.get('flavor')}]" if a.get("flavor") else "")
-                + (f"  ({a['motivo']})" if a.get("motivo") else "")
-                for a in p["acciones"][:40]
+                + (f"  ({a['reason']})" if a.get("reason") else "")
+                for a in p["actions"][:40]
             )
-            + (f"\n  ... y {len(p['acciones']) - 40} mas" if len(p["acciones"]) > 40 else "")
-            + ("\n\naplicado: " + str(len(p["aplicado"]["imported"])) + " importadas, "
-               + str(len(p["aplicado"]["skipped"])) + " salteadas, "
-               + str(len(p["aplicado"]["failed"])) + " fallidas" if p.get("aplicado") else "\n(solo plan: corre con --apply para ejecutarlo)"),
+            + (f"\n  ... y {len(p['actions']) - 40} mas" if len(p["actions"]) > 40 else "")
+            + ("\n\napplied: " + str(len(p["applied"]["imported"])) + " imported, "
+               + str(len(p["applied"]["skipped"])) + " salteadas, "
+               + str(len(p["applied"]["failed"])) + " failed" if p.get("applied") else "\n(solo plan: corre con --apply para ejecutarlo)"),
             flush=True,
         )
     elif args.cmd == "flavor":
@@ -2760,10 +2760,10 @@ def main(argv: list[str] | None = None) -> int:
             f"skills: {d['skills_hub']} en {d['tipos']} tipos\n"
             f"harnesss instalados ({len(inst)}): {', '.join(inst) or '-'}\n"
             f"con carpeta skills/ ({len(with_skills)}): {', '.join(with_skills) or '-'}\n"
-            "agente                        enlaces  muertas  faltan  nativas  colisiones\n"
+            "agente                        links  dead  missing  native  collisions\n"
             + "\n".join(
-                f"{r['app'][:28]:28}  {r['enlaces_al_hub']:>7}  {r['muertas']:>7}  "
-                f"{r['faltantes']:>6}  {r['nativas']:>7}  {len(r['colisiones']):>10}"
+                f"{r['app'][:28]:28}  {r['links_al_hub']:>7}  {r['dead']:>7}  "
+                f"{r['missingtes']:>6}  {r['native']:>7}  {len(r['collisions']):>10}"
                 for r in d["agentes"]
             )
             + "\n"
@@ -2776,7 +2776,7 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"hub: {s['hub']}\n"
                 f"skills: {s['skills']} en {s['tipos']} tipos ({s['anidadas']} anidadas), agentes: {s['agentes']}\n"
-                f"drift: {s['drift']} (faltan {s['faltan']}, mal {s['mal_apuntados']}, "
+                f"drift: {s['drift']} (missing {s['missing']}, mal {s['mal_apuntados']}, "
                 f"muertos {s['muertos']}, omitidos {s['omitidos']})",
                 flush=True,
             )
@@ -2790,39 +2790,39 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "use":
         print(
             f"proyecto: {result['project_name']} ({result['project']})\n"
-            f"promocionadas: {len(result['creadas'])} nuevas, {len(result['ya_estaban'])} ya estaban\n"
-            + (f"desconocidas en el hub: {', '.join(result['desconocidas'])}\n" if result["desconocidas"] else "")
-            + (f"ocupadas sin enlace: {', '.join(result['ocupadas_sin_enlace'])}\n" if result["ocupadas_sin_enlace"] else "")
+            f"promoted: {len(result['created'])} nuevas, {len(result['already_present'])} already present\n"
+            + (f"unknown in hub: {', '.join(result['unknown'])}\n" if result["unknown"] else "")
+            + (f"occupied without link: {', '.join(result['ocupadas_sin_enlace'])}\n" if result["ocupadas_sin_enlace"] else "")
             + f"manifest: {result['manifest']}",
             flush=True,
         )
     elif args.cmd == "unuse":
         print(
             f"proyecto: {result['project']}\n"
-            f"retiradas: {len(result['retiradas'])}"
-            + (f" | no estaban: {', '.join(result['no_estaban'])}" if result["no_estaban"] else ""),
+            f"removed: {len(result['removed'])}"
+            + (f" | no estaban: {', '.join(result['absent'])}" if result["no_estaban"] else ""),
             flush=True,
         )
     elif args.cmd == "project-status":
         s = result
         print(
             f"proyecto: {s['project_name']} ({s['project']})  resolucion: {s['resolucion']}\n"
-            f"promocionadas: {s['promocionadas']} | sanas {len(s['sanas'])} | "
-            f"desactualizadas {len(s['desactualizadas'])} | rotas {len(s['rotas'])} | sin enlace {len(s['sin_enlace'])}\n"
-            + (f"desactualizadas: {', '.join(s['desactualizadas'])}\n" if s["desactualizadas"] else "")
-            + (f"rotas: {'; '.join(s['rotas'])}\n" if s["rotas"] else "")
-            + (f"sin enlace: {'; '.join(s['sin_enlace'])}\n" if s["sin_enlace"] else "")
+            f"promoted: {s['promoted']} | healthy {len(s['healthy'])} | "
+            f"stale {len(s['stale'])} | broken {len(s['broken'])} | missing link {len(s['missing_links'])}\n"
+            + (f"stale: {', '.join(s['stale'])}\n" if s["stale"] else "")
+            + (f"broken: {'; '.join(s['broken'])}\n" if s["broken"] else "")
+            + (f"missing link: {'; '.join(s['missing_links'])}\n" if s["sin_enlace"] else "")
             + (
-                f"enlaces sin registrar: {', '.join(s['enlaces_sin_registrar'])}\n"
-                if s["enlaces_sin_registrar"]
+                f"unregistered links: {', '.join(s['links_sin_registrar'])}\n"
+                if s["links_sin_registrar"]
                 else ""
             )
             + (
-                f"duplicadas locales (estan en el hub y ademas copiadas): {', '.join(s['duplicadas_locales'])}\n"
+                f"local duplicates (estan en el hub y ademas copiadas): {', '.join(s['local_duplicates'])}\n"
                 if s["duplicadas_locales"]
                 else ""
             )
-            + (f"locales propias: {', '.join(s['locales_propias'])}\n" if s["locales_propias"] else "")
+            + (f"local only: {', '.join(s['local_only'])}\n" if s["locales_propias"] else "")
             + ("" if s["tiene_config"] else "sin .agents/config.json (corre `init` para fijar el nombre)\n"),
             flush=True,
         )
