@@ -161,20 +161,27 @@ class Hub:
         return total
 
     def agents(self) -> list[Path]:
-        """Las carpetas `skills/` de cada agente, incluido el propio hub y Reasonix."""
+        """Las carpetas `skills/` de cada agente, incluido Reasonix.
+
+        El propio hub NUNCA es un agente. `~/.agents/skills` cae en el barrido de
+        `~/.*/skills`, y tratarlo como agente hace que `sync` le enlace cada skill
+        dentro de si mismo: 842 junctions que no apuntan a nada nuevo y que git
+        materializaria como copias del hub dentro del hub.
+        """
         roots: list[Path] = []
+        own = self.root.resolve()
         for entry in sorted(HOME.iterdir()):
             if not entry.is_dir() or not entry.name.startswith("."):
                 continue
             if entry.name in self.exclude_agents:
                 continue
             cand = entry / "skills"
-            if cand.is_dir():
+            if cand.is_dir() and cand.resolve() != own:
                 roots.append(cand)
         appdata = os.environ.get("APPDATA")
         if appdata:
             reasonix = Path(appdata) / "Reasonix" / "skills"
-            if reasonix.is_dir():
+            if reasonix.is_dir() and reasonix.resolve() != own:
                 roots.append(reasonix)
         return roots
 
@@ -1372,6 +1379,31 @@ def harness_configs() -> list:
     return uniq
 
 
+def _same_path(entry: str, hub_path: str) -> bool:
+    """Same directory even when the separator or the case differs.
+
+    A hub already declared as `C:/Users/me/.agents/skills` must not gain a second
+    entry `C:\\Users\\me\\.agents\\skills`: two identical roots in a harness config
+    is one skill loaded twice, not a preference.
+    """
+    def norm(value: str) -> str:
+        value = value.strip().strip('"').strip("'").rstrip("/\\")
+        return os.path.normcase(str(Path(value.replace("/", os.sep))))
+
+    return norm(entry) == norm(hub_path)
+
+
+def _hub_already_listed(text: str, hub_path: str) -> bool:
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not (line.startswith("- ") or line.startswith('"-') or '"-' in line):
+            continue
+        entry = line[2:].strip()
+        if _same_path(entry, hub_path):
+            return True
+    return False
+
+
 def _prepend_toml_paths(text: str, hub_path: str) -> tuple:
     """Puts the hub first in `paths = [...]` inside [skills]. (text, changed)"""
     lines = text.splitlines()
@@ -1399,6 +1431,8 @@ def _prepend_toml_paths(text: str, hub_path: str) -> tuple:
                 return text, False
             inner = block.split("=", 1)[1].strip()
             items = inner.strip().lstrip("[").rstrip("]").strip()
+            if any(_same_path(part, hub_path) for part in items.split(",") if part.strip()):
+                return text, False
             new_inner = f'["{hub_path}"' + (f", {items}" if items else "") + "]"
             indent = lines[start][: len(lines[start]) - len(lines[start].lstrip())]
             lines[start : j + 1] = [f"{indent}paths = {new_inner}"]
@@ -1408,7 +1442,7 @@ def _prepend_toml_paths(text: str, hub_path: str) -> tuple:
 
 def _prepend_yaml_external_dirs(text: str, hub_path: str) -> tuple:
     """Puts the hub first in skills.external_dirs. (text, changed)"""
-    if f"- {hub_path}" in text or f'- "{hub_path}"' in text:
+    if f"- {hub_path}" in text or f'- "{hub_path}"' in text or _hub_already_listed(text, hub_path):
         return text, False
     lines = text.splitlines()
     for i, line in enumerate(lines):
@@ -1427,11 +1461,18 @@ def _prepend_yaml_external_dirs(text: str, hub_path: str) -> tuple:
     return text, False
 
 
-def apply_precedence(hub: Hub, apply: bool = False) -> dict:
-    """Declares the hub first in the config of every harness that supports it."""
+def apply_precedence(hub: Hub, apply: bool = False, only: str | None = None) -> dict:
+    """Declares the hub first in the config of every harness that supports it.
+
+    `only` restricts it to one harness: declaring the hub in Reasonix's
+    config.toml when the ask was "make Hermes see the files" is a side effect
+    nobody asked for.
+    """
     hub_path = str(hub.root)
     rows = []
     for app, path, kind in harness_configs():
+        if only and app != only:
+            continue
         try:
             text = path.read_text(encoding="utf-8")
         except OSError as exc:
@@ -3462,8 +3503,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_port.add_argument("--to", help="harness destino (si falta: todos los instalados)")
     p_port.add_argument("--apply", action="store_true", help="genera los archivos (si falta: solo el plan)")
     p_port.add_argument("--no-llm", action="store_true")
-    sub.add_parser("precedence", parents=[common], help="declara el hub primero en la config de cada harness").add_argument(
-        "--apply", action="store_true", help="escribe (con backup); si falta, solo muestra")
+    p_prec = sub.add_parser("precedence", parents=[common], help="declara el hub primero en la config de cada harness")
+    p_prec.add_argument("--apply", action="store_true", help="escribe (con backup); si falta, solo muestra")
+    p_prec.add_argument("--harness", help="solo este harness (p. ej. hermes, con su propio HERMES_HOME)")
     p_adopt = sub.add_parser("adopt", parents=[common], help="adopta skills native: copia al hub, verifica hash, deja link")
     p_adopt.add_argument("path", nargs="?", help="carpeta de la skill")
     p_adopt.add_argument("--all", action="store_true", help="todas las native de todos los harnesss")
@@ -3588,7 +3630,8 @@ def main(argv: list[str] | None = None) -> int:
                 h["app"] for h in detect_harnesses() if h["skills_dir"]]
             result = port_missing(hub, targets, cfg, apply=args.apply)
     elif args.cmd == "precedence":
-        result = apply_precedence(hub, apply=args.apply)
+        result = apply_precedence(hub, apply=args.apply,
+                                  only=normalize_harness(args.harness) if args.harness else None)
     elif args.cmd == "lint":
         result = lint_hub(hub, only=args.skill, strict=args.strict)
     elif args.cmd == "diff":
@@ -3797,7 +3840,8 @@ def main(argv: list[str] | None = None) -> int:
                 h["app"] for h in detect_harnesses() if h["skills_dir"]]
             result = port_missing(hub, targets, cfg, apply=args.apply)
     elif args.cmd == "precedence":
-        result = apply_precedence(hub, apply=args.apply)
+        result = apply_precedence(hub, apply=args.apply,
+                                  only=normalize_harness(args.harness) if args.harness else None)
     elif args.cmd == "lint":
         result = lint_hub(hub, only=args.skill, strict=args.strict)
     elif args.cmd == "diff":

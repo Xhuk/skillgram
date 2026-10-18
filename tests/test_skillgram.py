@@ -48,6 +48,17 @@ class HomeCase(unittest.TestCase):
 
 
 class TestHub(HomeCase):
+    def test_the_hub_itself_is_never_an_agent(self):
+        """`~/.agents/skills` cae en el barrido `~/.*/skills`: enlazarlo a si mismo
+        deja 842 junctions y hace que git materialice copias del hub dentro del hub."""
+        hub_here = self.home / ".agents" / "skills"
+        (hub_here / "infra-ops" / "deploy").mkdir(parents=True)
+        (hub_here / "infra-ops" / "deploy" / "SKILL.md").write_text("x", encoding="utf-8")
+        (self.home / ".claude" / "skills").mkdir(parents=True)
+        agents = [p.resolve() for p in skillgram.Hub(hub_here).agents()]
+        self.assertIn((self.home / ".claude" / "skills").resolve(), agents)
+        self.assertNotIn(hub_here.resolve(), agents)
+
     def test_skills_and_tipos(self):
         make_skill(self.hub_root, "infra-ops", "deploy")
         make_skill(self.hub_root, "design-ui", "archify")
@@ -293,6 +304,38 @@ class TestPrecedence(HomeCase):
         self.assertIn("- C:/hub", new)
         again, changed2 = skillgram._prepend_yaml_external_dirs(new, "C:/hub")
         self.assertFalse(changed2)
+
+    def test_same_hub_with_other_separator_is_not_duplicated(self):
+        text = "skills:\n  external_dirs:\n    - C:/Users/me/.agents/skills\n"
+        new, changed = skillgram._prepend_yaml_external_dirs(text, "C:\\Users\\me\\.agents\\skills")
+        self.assertFalse(changed)
+        self.assertEqual(new.count("external_dirs"), 1)
+        toml = '[skills]\npaths = ["C:/Users/me/.agents/skills"]\n'
+        new2, changed2 = skillgram._prepend_toml_paths(toml, "C:\\Users\\me\\.agents\\skills")
+        self.assertFalse(changed2)
+
+    def test_only_filter_touches_one_harness(self):
+        (self.home / ".hermes").mkdir(parents=True)
+        hermes_cfg = self.home / ".hermes" / "config.yaml"
+        hermes_cfg.write_text("skills:\n  creation_nudge_interval: 15\n", encoding="utf-8")
+        hub = skillgram.Hub(self.hub_root)
+        res = skillgram.apply_precedence(hub, apply=False, only="reasonix")
+        self.assertEqual([r["harness"] for r in res["configs"]], [])
+        # sin filtro, hermes entra en la lista
+        sin_filtro = skillgram.apply_precedence(hub, apply=False)
+        self.assertIn("hermes", [r["harness"] for r in sin_filtro["configs"]])
+
+    def test_apply_writes_a_backup_and_is_idempotent(self):
+        (self.home / ".hermes").mkdir(parents=True)
+        cfg = self.home / ".hermes" / "config.yaml"
+        cfg.write_text("skills:\n  creation_nudge_interval: 15\n", encoding="utf-8")
+        hub = skillgram.Hub(self.hub_root)
+        first = skillgram.apply_precedence(hub, apply=True, only="hermes")
+        self.assertTrue(first["configs"][0]["applied"])
+        self.assertTrue(Path(first["configs"][0]["backup"]).is_file())
+        self.assertIn(str(self.hub_root), cfg.read_text(encoding="utf-8"))
+        second = skillgram.apply_precedence(hub, apply=True, only="hermes")
+        self.assertFalse(second["configs"][0]["cambiado"])
 
 
 class TestBootstrap(HomeCase):
