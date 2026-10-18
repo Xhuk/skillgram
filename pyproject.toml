@@ -40,7 +40,8 @@ classifiers = [
   "Intended Audience :: Developers",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
-  "Topic :: Software Development :: Tools",
+  "Topic :: Software Development",
+  "Topic :: Utilities",
 ]
 
 [project.scripts]
