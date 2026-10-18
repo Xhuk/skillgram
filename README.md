@@ -185,3 +185,83 @@ python -m unittest discover -s tests -v
 ## License
 
 MIT.
+
+## Mounting model (v0.2)
+
+**soft-mount + precedence + auto-adoption.** Nothing is moved or replaced by default:
+
+- `skillgram precedence` declares the hub **first** in each harness's own config
+  (`skills.paths` for Reasonix, `skills.external_dirs` for Hermes). Backups are
+  written next to the file (`*.skillgram-bak-<timestamp>`). If you delete
+  skillgram, every harness keeps exactly what it had.
+- `skillgram adopt <path>` (or `--all`) is the cooperative "hijack": copies the
+  native skill into the hub, verifies the hash, moves the original to
+  `~/.agents/skillgram-quarantine/<harness>/<skill>` and leaves a junction in its
+  place. Never deletes.
+- The hard-mount model (one junction for the whole `skills/` dir) is **not** the
+  default on purpose: a `rimraf skills` or a harness uninstall would wipe the
+  whole library of every agent.
+
+## Flavor and porting
+
+The hub keeps **everything**; scope is not trimmed per harness. What changes is
+the wording:
+
+```bash
+skillgram flavor                 # detect which agent each skill is wired to
+skillgram flavor --apply         # persist it in SKILLMETA.json (SKILL.md untouched)
+skillgram port --apply           # generate agents/<harness>.md where a port is missing
+skillgram port my-skill --to reasonix --apply
+```
+
+`skillgram port` asks the connected LLM to translate the skill for the target
+harness (CLI names, subagent mechanics) and writes **only** `agents/<harness>.md`
+inside the skill. The original stays generic, so any harness can still read it;
+the ported fragment is what the target harness should follow.
+
+## Scope: the project is the unit
+
+The hub is the library; a *project* is what an agent actually needs while working
+in it.
+
+```bash
+skillgram init                 # project identity
+skillgram use <skill>...       # this project needs these
+skillgram project-status       # drift of that scope
+skillgram mount                # materialize the project scope into each harness
+```
+
+`mount` writes the project's set where harnesses look **per project**
+(`<project>/.agents/skills`, `<project>/.claude/skills`, `<project>/.cursor/rules`),
+so two different agents working on the same repo see the same skills without
+depending on their global homes.
+### Strict project-only (default target)
+
+The hub holds the library (900+ skills exist), but a harness working inside a
+project sees **only that project's set** — 20 skills, not 900:
+
+```bash
+skillgram mount --apply              # materialize the project scope per harness
+skillgram mount --apply --prune-global   # strict: also drop the hub links from ~/.<harness>/skills
+```
+
+`mount` writes links only inside the project, in every place a harness looks when
+it works there:
+
+| Harness | Project dir |
+|---|---|
+| Hermes | `.agents/skills`, `.hermes/skills` |
+| Claude Code | `.claude/skills` |
+| Codex | `.codex/skills` |
+| Cursor | `.cursor/skills` |
+| Gemini CLI | `.gemini/skills` |
+| Copilot | `.github/skills` |
+| Kiro / Qwen / Aider / OpenCode | `.kiro/skills`, `.qwen/skills`, `.aider/skills`, `.opencode/skills` |
+
+So two different agents working on the same repo see the same skills, and
+skillgram's only job is: be the hub, and fill the gaps (adopt what a harness
+installs, port the flavor when a skill is wired to another agent).
+
+`--prune-global` is the strict switch: it removes the hub links from the harness
+homes (only links that resolve into the hub; native skills stay). After that, a
+harness outside a project sees nothing from the hub — by design.

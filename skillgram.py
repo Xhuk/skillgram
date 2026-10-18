@@ -71,7 +71,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "0.1.0"
+VERSION = "0.3.0"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto
@@ -1161,6 +1161,465 @@ def onboard(hub: Hub, scope: str = "all", harness: str | None = None, use_llm: b
     return plan
 
 # ---------------------------------------------------------------------------
+# Flavor: que agente espera cada skill, y portarla a los demas
+# ---------------------------------------------------------------------------
+#
+# El hub tiene TODO (no se recorta por agente). Lo que se resuelve por flavor es
+# la redaccion: si una skill esta cableada a Claude y el harness es Reasonix, se
+# genera `agents/<harness>.md` con la version portada. El SKILL.md nunca se
+# reescribe, asi que cualquier harness sigue leyendo lo mismo.
+
+SKILL_META = "SKILLMETA.json"
+AGENTS_DIR = "agents"
+
+FLAVOR_HINTS = {
+    "claude": ("claude code", "claude-code", "`claude", "claude -p", ".claude/"),
+    "codex": ("codex cli", "`codex", "codex exec", ".codex/"),
+    "hermes": ("`hermes", "hermes_cli", "~/.hermes", "hermes agent"),
+    "reasonix": ("`reasonix", "reasonix.toml", "reasonix run", "reasonix -p"),
+    "cursor": (".cursor/rules", "cursor rules", "`cursor"),
+    "gemini": ("gemini cli", "`gemini"),
+    "opencode": ("`opencode", "opencode run"),
+    "copilot": ("copilot cli", "`copilot"),
+}
+
+GENERIC_FLAVOR = "generic"
+
+
+def skill_meta(skill_dir: Path) -> dict:
+    path = skill_dir / SKILL_META
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def write_skill_meta(skill_dir: Path, meta: dict) -> None:
+    path = skill_dir / SKILL_META
+    try:
+        path.write_text(json.dumps(meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def detect_flavor(skill_dir: Path) -> dict:
+    """Heuristica determinista: que agente cablea el texto de la skill."""
+    try:
+        text = (skill_dir / "SKILL.md").read_text(encoding="utf-8", errors="replace").lower()
+    except OSError:
+        return {"flavor": GENERIC_FLAVOR, "score": {}, "evidence": []}
+    score = {}
+    evidence = []
+    for flavor, needles in FLAVOR_HINTS.items():
+        hits = [n for n in needles if n in text]
+        if hits:
+            score[flavor] = len(hits)
+            evidence.extend(f"{flavor}:{h}" for h in hits)
+    best = max(score, key=score.get) if score else GENERIC_FLAVOR
+    flavor = best if score.get(best, 0) >= 2 else GENERIC_FLAVOR
+    return {"flavor": flavor, "score": score, "evidence": evidence[:6]}
+
+
+def flavor_scan(hub: Hub, apply: bool = False) -> dict:
+    """Detecta el flavor de cada skill del hub y (opcional) lo guarda en el sidecar."""
+    rows = []
+    for name, tipo in sorted(hub.skills().items()):
+        d = hub.root / tipo / name
+        det = detect_flavor(d)
+        meta = skill_meta(d)
+        changed = apply and meta.get("flavor") != det["flavor"]
+        if changed:
+            meta.update({"flavor": det["flavor"], "flavor_score": det["score"]})
+            write_skill_meta(d, meta)
+        rows.append({"skill": name, "tipo": tipo, **det, "antes": meta.get("flavor"), "guardado": changed})
+    counts = {}
+    for r in rows:
+        counts[r["flavor"]] = 1 + counts.get(r["flavor"], 0)
+    return {
+        "ok": True,
+        "op": "flavor-scan",
+        "aplicado": apply,
+        "skills": len(rows),
+        "por_flavor": counts,
+        "detalle": rows,
+    }
+
+
+PORT_SYSTEM = (
+    "You port agent skills between coding harnesses. You receive one SKILL.md and a "
+    "target harness. Reply ONLY with a markdown fragment (no frontmatter, no fences) "
+    "that a generic agent loading the original SKILL.md can follow in the target "
+    "harness: translate tool names, CLI invocations and subagent mechanics. Keep every "
+    "step, file path and constraint of the original. Do not invent steps. If the "
+    "original already works unchanged, reply exactly: NO_PORT_NEEDED"
+)
+
+
+def port_skill(hub: Hub, name: str, to_harness: str, cfg: dict | None) -> dict:
+    """Genera agents/<harness>.md para una skill cableada a otro agente."""
+    tipos = hub.skills()
+    tipo = tipos.get(name)
+    if not tipo:
+        return {"ok": False, "op": "port", "skill": name, "error": "no existe en el hub"}
+    d = hub.root / tipo / name
+    meta = skill_meta(d)
+    flavor = meta.get("flavor") or detect_flavor(d)["flavor"]
+    if flavor == GENERIC_FLAVOR:
+        return {"ok": True, "op": "port", "skill": name, "skipped": "la skill ya es generica"}
+    if not cfg:
+        return {"ok": False, "op": "port", "skill": name, "error": "no hay LLM conectada configurada"}
+    existing = d / AGENTS_DIR / f"{to_harness}.md"
+    if existing.is_file():
+        return {"ok": True, "op": "port", "skill": name, "skipped": f"ya existe {existing}"}
+    body = (d / "SKILL.md").read_text(encoding="utf-8", errors="replace")
+    try:
+        answer = llm_chat(cfg, PORT_SYSTEM, f"target harness: {to_harness}\n\n---\n{body[:12000]}")
+    except OSError as exc:
+        return {"ok": False, "op": "port", "skill": name, "error": str(exc)}
+    answer = answer.strip()
+    if answer.upper().startswith("NO_PORT_NEEDED"):
+        return {"ok": True, "op": "port", "skill": name, "skipped": "el modelo dice que no hace falta"}
+    existing.parent.mkdir(parents=True, exist_ok=True)
+    existing.write_text(answer + "\n", encoding="utf-8")
+    ports = meta.setdefault("ports", {})
+    ports[to_harness] = {"path": f"{AGENTS_DIR}/{to_harness}.md", "at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    meta["flavor"] = flavor
+    write_skill_meta(d, meta)
+    return {"ok": True, "op": "port", "skill": name, "flavor": flavor, "to": to_harness, "wrote": str(existing)}
+
+
+def port_missing(hub: Hub, harnesses: list, cfg: dict | None, apply: bool = False) -> dict:
+    """Porta a cada harness las skills cuyo flavor no es generico ni suyo."""
+    plan, done = [], []
+    for name, tipo in sorted(hub.skills().items()):
+        d = hub.root / tipo / name
+        flavor = skill_meta(d).get("flavor") or detect_flavor(d)["flavor"]
+        if flavor == GENERIC_FLAVOR:
+            continue
+        for h in harnesses:
+            if h == flavor:
+                continue
+            if (d / AGENTS_DIR / f"{h}.md").is_file():
+                continue
+            plan.append({"skill": name, "flavor": flavor, "to": h})
+            if apply:
+                done.append(port_skill(hub, name, h, cfg))
+    return {"ok": True, "op": "port-scan", "aplicado": apply, "pendientes": plan, "hechas": done}
+
+
+# ---------------------------------------------------------------------------
+# Precedencia: el hub como capa de arriba en la config de cada harness
+# ---------------------------------------------------------------------------
+#
+# No se mueve ningun archivo: se declara el hub PRIMERO en la lista de roots que
+# cada harness ya soporta. Si borran skillgram, cada harness se queda con lo suyo.
+
+def harness_configs() -> list:
+    """Configs donde se puede declarar precedencia (harness, archivo, tipo)."""
+    out = []
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        out.append(("reasonix", Path(appdata) / "Reasonix" / "config.toml", "toml"))
+    hermes_home = os.environ.get("HERMES_HOME")
+    if hermes_home:
+        out.append(("hermes", Path(hermes_home) / "config.yaml", "yaml"))
+    out.append(("hermes", HOME / ".hermes" / "config.yaml", "yaml"))
+    seen = set()
+    uniq = []
+    for h, p, k in out:
+        if not p.is_file():
+            continue
+        key = str(p.resolve()).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append((h, p, k))
+    return uniq
+
+
+def _prepend_toml_paths(text: str, hub_path: str) -> tuple:
+    """Pone hub_path primero en `paths = [...]` dentro de [skills]. (texto, cambio)"""
+    lines = text.splitlines()
+    in_skills = False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_skills = stripped == "[skills]"
+            continue
+        if in_skills and stripped.startswith("paths"):
+            if hub_path in line:
+                return text, False
+            start = i
+            depth = 0
+            chunk = []
+            j = i
+            while j < len(lines):
+                chunk.append(lines[j])
+                depth += lines[j].count("[") - lines[j].count("]")
+                if depth <= 0:
+                    break
+                j += 1
+            block = "\n".join(chunk)
+            if not block.rstrip().endswith("]"):
+                return text, False
+            inner = block.split("=", 1)[1].strip()
+            items = inner.strip().lstrip("[").rstrip("]").strip()
+            new_inner = f'["{hub_path}"' + (f", {items}" if items else "") + "]"
+            indent = lines[start][: len(lines[start]) - len(lines[start].lstrip())]
+            lines[start : j + 1] = [f"{indent}paths = {new_inner}"]
+            return "\n".join(lines), True
+    return text, False
+
+
+def _prepend_yaml_external_dirs(text: str, hub_path: str) -> tuple:
+    """Pone hub_path primero en skills.external_dirs. (texto, cambio)"""
+    if f"- {hub_path}" in text or f'- "{hub_path}"' in text:
+        return text, False
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip() == "skills:":
+            indent = len(line) - len(line.lstrip())
+            j = i + 1
+            while j < len(lines) and (not lines[j].strip() or len(lines[j]) - len(lines[j].lstrip()) > indent):
+                if lines[j].strip().startswith("external_dirs:"):
+                    sub = len(lines[j]) - len(lines[j].lstrip())
+                    lines.insert(j + 1, " " * (sub + 2) + f"- {hub_path}")
+                    return "\n".join(lines), True
+                j += 1
+            lines.insert(i + 1, " " * (indent + 2) + "external_dirs:")
+            lines.insert(i + 2, " " * (indent + 4) + f"- {hub_path}")
+            return "\n".join(lines), True
+    return text, False
+
+
+def apply_precedence(hub: Hub, apply: bool = False) -> dict:
+    """Declara el hub primero en la config de cada harness que lo soporte."""
+    hub_path = str(hub.root)
+    rows = []
+    for app, path, kind in harness_configs():
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            rows.append({"harness": app, "config": str(path), "error": str(exc)})
+            continue
+        if kind == "toml":
+            new, changed = _prepend_toml_paths(text, hub_path)
+        else:
+            new, changed = _prepend_yaml_external_dirs(text, hub_path)
+        row = {"harness": app, "config": str(path), "cambiado": changed, "aplicado": False}
+        if changed and apply:
+            backup = path.with_suffix(path.suffix + f".skillgram-bak-{time.strftime('%Y%m%d-%H%M%S')}")
+            try:
+                backup.write_text(text, encoding="utf-8")
+                path.write_text(new if new.endswith("\n") else new + "\n", encoding="utf-8")
+                row["aplicado"] = True
+                row["backup"] = str(backup)
+            except OSError as exc:
+                row["error"] = str(exc)
+        rows.append(row)
+    return {
+        "ok": True,
+        "op": "precedence",
+        "hub": hub_path,
+        "aplicado": apply,
+        "configs": rows,
+        "cambios": sum(1 for r in rows if r.get("cambiado")),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Auto-adopcion: el "hijack" cooperativo
+# ---------------------------------------------------------------------------
+
+def adopt_skill(hub: Hub, path: Path, quarantine_root: Path | None = None) -> dict:
+    """Adopta una skill nativa: copia al hub, verifica hash, deja link, original a cuarentena."""
+    src = Path(path)
+    if not (src / "SKILL.md").is_file():
+        return {"ok": False, "op": "adopt", "path": str(src), "error": "no es una skill (falta SKILL.md)"}
+    name = src.name
+    tipo = _heuristic_category(name, hub.tipos())
+    dest = hub.root / tipo / name
+    if dest.exists():
+        return {"ok": False, "op": "adopt", "path": str(src), "error": f"ya existe {dest}"}
+    original_hash = skill_hash(src)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.copytree(src, dest)
+    except OSError as exc:
+        return {"ok": False, "op": "adopt", "path": str(src), "error": str(exc)}
+    if skill_hash(dest) != original_hash:
+        shutil.rmtree(dest, ignore_errors=True)
+        return {"ok": False, "op": "adopt", "path": str(src), "error": "hash distinto tras copiar"}
+    qroot = quarantine_root or (HOME / ".agents" / "skillgram-quarantine")
+    qdir = qroot / src.parent.name
+    qdir.mkdir(parents=True, exist_ok=True)
+    target = qdir / name
+    try:
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        shutil.move(str(src), str(target))
+    except OSError as exc:
+        return {"ok": False, "op": "adopt", "path": str(src), "imported": str(dest), "error": f"cuarentena: {exc}"}
+    _run_batch([f'mklink /J "{src}" "{dest}"'])
+    return {
+        "ok": os.path.lexists(src),
+        "op": "adopt",
+        "skill": name,
+        "tipo": tipo,
+        "hub": str(dest),
+        "cuarentena": str(target),
+        "link": str(src),
+    }
+
+
+def adopt_natives(hub: Hub, harnesses: list | None = None) -> dict:
+    """Adopta todas las skills nativas que encuentre (auto-adopcion del watch)."""
+    done, failed = [], []
+    for row in harness_inventory(hub):
+        if harnesses and row["app"] not in harnesses:
+            continue
+        for nat in row["nativas"]:
+            res = adopt_skill(hub, Path(nat["path"]))
+            (done if res.get("ok") else failed).append(res)
+    return {"ok": not failed, "op": "adopt-all", "adoptadas": done, "fallidas": failed}
+
+
+# ---------------------------------------------------------------------------
+# Mount: el scope es el PROYECTO (no el home del harness)
+# ---------------------------------------------------------------------------
+#
+# El hub es la biblioteca (900 skills, existen). El proyecto declara las suyas
+# (`use`) y `mount` las materializa SOLO dentro del proyecto, donde cada harness
+# mira cuando trabaja ahi. Fuera del proyecto, el harness no ve nada del hub:
+# asi dos agentes distintos sobre el mismo repo ven exactamente el mismo set.
+
+PROJECT_SKILL_DIRS = {
+    "agents": (".agents/skills",),
+    "claude": (".claude/skills",),
+    "claude-code": (".claude/skills",),
+    "codex": (".codex/skills",),
+    "cursor": (".cursor/skills",),
+    "hermes": (".agents/skills", ".hermes/skills"),
+    "gemini": (".gemini/skills",),
+    "gemini-cli": (".gemini/skills",),
+    "opencode": (".opencode/skills",),
+    "kiro": (".kiro/skills",),
+    "qwen-code": (".qwen/skills",),
+    "aider": (".aider/skills",),
+    "copilot": (".github/skills",),
+}
+
+
+def project_scope(hub: Hub, project: Path) -> dict:
+    """Las skills del scope del proyecto (manifest de `use`)."""
+    manifest = _read_manifest(project)
+    known = hub.skills()
+    rows = []
+    for name in sorted(manifest["skills"]):
+        tipo = known.get(name)
+        if not tipo:
+            continue
+        rows.append({"name": name, "tipo": tipo, "src": str(hub.root / tipo / name)})
+    return {"project": str(project), "project_name": manifest.get("project_name"), "skills": rows}
+
+
+def mount_project(hub: Hub, project: Path, apply: bool = False, prune_global: bool = False) -> dict:
+    """Materializa el scope del proyecto en cada harness que mira dirs de proyecto."""
+    scope = project_scope(hub, project)
+    if not scope["skills"]:
+        return {
+            "ok": False,
+            "op": "mount",
+            "project": str(project),
+            "error": "el proyecto no tiene skills en su scope; corre `skillgram use <skill>...` primero",
+        }
+    wanted = {r["name"]: Path(r["src"]) for r in scope["skills"]}
+    harnesses = [h["app"] for h in detect_harnesses() if h["instalado"]]
+    rows = []
+    for app in harnesses:
+        rels = PROJECT_SKILL_DIRS.get(app)
+        if not rels:
+            continue
+        for rel in rels:
+            target_dir = project / rel
+            created, removed, kept, skipped = [], [], [], []
+            batch = []
+            for name, src in wanted.items():
+                dest = target_dir / name
+                if is_link(dest):
+                    tgt = link_target(dest)
+                    if tgt and Path(tgt).resolve() == src.resolve():
+                        kept.append(name)
+                        continue
+                    _remove_junction(dest)
+                elif dest.exists():
+                    skipped.append(name)
+                    continue
+                batch.append((dest, src))
+            if target_dir.is_dir():
+                for entry in target_dir.iterdir():
+                    if entry.name in wanted or not is_link(entry):
+                        continue
+                    tgt = link_target(entry)
+                    if tgt and _under(Path(tgt), hub.root):
+                        if apply:
+                            _remove_junction(entry)
+                        removed.append(entry.name)
+            if batch and apply:
+                target_dir.mkdir(parents=True, exist_ok=True)
+                _run_batch([f'mklink /J "{d}" "{s}"' for d, s in batch])
+                created = [n for n, _ in ((d.name, s) for d, s in batch) if os.path.lexists(target_dir / n)]
+            else:
+                created = [d.name for d, _s in batch]
+            rows.append(
+                {
+                    "harness": app,
+                    "dir": str(target_dir),
+                    "creados": created,
+                    "ya_estaban": kept,
+                    "retirados": removed,
+                    "nativos_sin_tocar": skipped,
+                }
+            )
+
+    pruned = {"harness": None, "retirados": []}
+    if prune_global:
+        pruned = prune_global_links(hub, apply=apply)
+    return {
+        "ok": True,
+        "op": "mount",
+        "project": str(project),
+        "project_name": scope["project_name"],
+        "skills": len(wanted),
+        "aplicado": apply,
+        "harnesses": rows,
+        "global": pruned,
+    }
+
+
+def prune_global_links(hub: Hub, apply: bool = False) -> dict:
+    """Retira de los homes los enlaces al hub: strict project-only."""
+    if not apply:
+        total = 0
+        for agent_dir in hub.agents():
+            for entry in agent_dir.iterdir():
+                if is_link(entry):
+                    tgt = link_target(entry)
+                    if tgt and _under(Path(tgt), hub.root):
+                        total += 1
+        return {"harness": "*", "retirados": [], "pendientes": total, "aplicado": False}
+    removed = 0
+    for agent_dir in hub.agents():
+        for entry in list(agent_dir.iterdir()):
+            if not is_link(entry):
+                continue
+            tgt = link_target(entry)
+            if tgt and _under(Path(tgt), hub.root) and _remove_junction(entry):
+                removed += 1
+    return {"harness": "*", "retirados": [f"{removed} enlaces"], "aplicado": True}
+
+# ---------------------------------------------------------------------------
 # Log y estado
 # ---------------------------------------------------------------------------
 
@@ -1401,6 +1860,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_onb.add_argument("--replace-natives", action="store_true", help="reemplaza la copia nativa por un link (la copia va a cuarentena)")
     p_onb.add_argument("--no-llm", action="store_true", help="no consulta la LLM conectada")
     p_onb.add_argument("--plan", help="escribe el plan JSON en esa ruta")
+    sub.add_parser("flavor", parents=[common], help="detecta el flavor (agente) de cada skill del hub").add_argument(
+        "--apply", action="store_true", help="guarda el flavor en SKILLMETA.json")
+    p_port = sub.add_parser("port", parents=[common], help="porta skills cableadas a otro harness (agents/<harness>.md)")
+    p_port.add_argument("skill", nargs="?", help="skill puntual (si falta: escanea todo el hub)")
+    p_port.add_argument("--to", help="harness destino (si falta: todos los instalados)")
+    p_port.add_argument("--apply", action="store_true", help="genera los archivos (si falta: solo el plan)")
+    p_port.add_argument("--no-llm", action="store_true")
+    sub.add_parser("precedence", parents=[common], help="declara el hub primero en la config de cada harness").add_argument(
+        "--apply", action="store_true", help="escribe (con backup); si falta, solo muestra")
+    p_adopt = sub.add_parser("adopt", parents=[common], help="adopta skills nativas: copia al hub, verifica hash, deja link")
+    p_adopt.add_argument("path", nargs="?", help="carpeta de la skill")
+    p_adopt.add_argument("--all", action="store_true", help="todas las nativas de todos los harnesss")
+    p_mount = sub.add_parser("mount", parents=[common], help="materializa el scope del proyecto en cada harness")
+    p_mount.add_argument("--project", help="carpeta del proyecto (default: resolucion tipo engram)")
+    p_mount.add_argument("--apply", action="store_true", help="crea/retira los enlaces (si falta: solo el plan)")
+    p_mount.add_argument("--prune-global", action="store_true", help="ademas retira los enlaces al hub de los homes (strict)")
     sub.add_parser("doctor", parents=[common], help="inventario: harnesss, nativas, colisiones, drift")
     p_status = sub.add_parser("status", parents=[common], help="drift actual sin tocar nada")
     p_status.add_argument("--verify", action="store_true", help="ademas verifica a donde apunta cada enlace (lento)")
@@ -1439,6 +1914,30 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "status":
         result = status(hub, deep=bool(getattr(args, "verify", False)))
+    elif args.cmd == "flavor":
+        result = flavor_scan(hub, apply=args.apply)
+    elif args.cmd == "port":
+        cfg = None if args.no_llm else llm_config()
+        if args.skill:
+            result = port_skill(hub, args.skill, args.to or "", cfg) if args.to else {
+                "ok": False, "op": "port", "error": "--to <harness> es obligatorio para una skill puntual"}
+        else:
+            targets = [args.to] if args.to else [
+                h["app"] for h in detect_harnesses() if h["skills_dir"]]
+            result = port_missing(hub, targets, cfg, apply=args.apply)
+    elif args.cmd == "precedence":
+        result = apply_precedence(hub, apply=args.apply)
+    elif args.cmd == "mount":
+        proj = resolve_project(args.project)
+        result = mount_project(hub, Path(proj["path"]), apply=args.apply, prune_global=args.prune_global)
+        result["resolucion"] = proj["source"]
+    elif args.cmd == "adopt":
+        if args.all:
+            result = adopt_natives(hub)
+        elif args.path:
+            result = adopt_skill(hub, Path(args.path))
+        else:
+            result = {"ok": False, "op": "adopt", "error": "pasame una carpeta o --all"}
     elif args.cmd == "doctor":
         result = doctor(hub)
     elif args.cmd == "onboard":
@@ -1549,6 +2048,30 @@ def main(argv: list[str] | None = None) -> int:
                + str(len(p["aplicado"]["failed"])) + " fallidas" if p.get("aplicado") else "\n(solo plan: corre con --apply para ejecutarlo)"),
             flush=True,
         )
+    elif args.cmd == "flavor":
+        result = flavor_scan(hub, apply=args.apply)
+    elif args.cmd == "port":
+        cfg = None if args.no_llm else llm_config()
+        if args.skill:
+            result = port_skill(hub, args.skill, args.to or "", cfg) if args.to else {
+                "ok": False, "op": "port", "error": "--to <harness> es obligatorio para una skill puntual"}
+        else:
+            targets = [args.to] if args.to else [
+                h["app"] for h in detect_harnesses() if h["skills_dir"]]
+            result = port_missing(hub, targets, cfg, apply=args.apply)
+    elif args.cmd == "precedence":
+        result = apply_precedence(hub, apply=args.apply)
+    elif args.cmd == "mount":
+        proj = resolve_project(args.project)
+        result = mount_project(hub, Path(proj["path"]), apply=args.apply, prune_global=args.prune_global)
+        result["resolucion"] = proj["source"]
+    elif args.cmd == "adopt":
+        if args.all:
+            result = adopt_natives(hub)
+        elif args.path:
+            result = adopt_skill(hub, Path(args.path))
+        else:
+            result = {"ok": False, "op": "adopt", "error": "pasame una carpeta o --all"}
     elif args.cmd == "doctor":
         d = result
         inst = [h["app"] for h in d["harnesses"] if h["instalado"]]
@@ -1624,6 +2147,8 @@ def main(argv: list[str] | None = None) -> int:
             + ("" if s["tiene_config"] else "sin .agents/config.json (corre `init` para fijar el nombre)\n"),
             flush=True,
         )
+    else:
+        print(json.dumps(result, ensure_ascii=False), flush=True)
     return 0 if result.get("ok", False) else 1
 
 

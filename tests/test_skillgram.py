@@ -196,5 +196,104 @@ class TestOnboard(HomeCase):
                     os.environ[k] = v
 
 
+
+
+class TestMount(HomeCase):
+    def _project_with_scope(self):
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        make_skill(self.hub_root, "design-ui", "archify")
+        proj = self.tmp / "proj"
+        skillgram.init_project("proj", str(proj))
+        sk = skillgram.Hub(self.hub_root)
+        skillgram.promote(sk, ["deploy"], proj)
+        (self.home / ".claude" / "skills").mkdir(parents=True)
+        return sk, proj
+
+    def test_scope_only_has_promoted(self):
+        sk, proj = self._project_with_scope()
+        scope = skillgram.project_scope(sk, proj)
+        self.assertEqual([r["name"] for r in scope["skills"]], ["deploy"])
+        self.assertEqual(scope["skills"][0]["tipo"], "infra-ops")
+
+    @unittest.skipUnless(sys.platform == "win32", "junctions: Windows only")
+    def test_mount_materializes_only_project_scope(self):
+        sk, proj = self._project_with_scope()
+        plan = skillgram.mount_project(sk, proj, apply=False)
+        self.assertEqual(plan["skills"], 1)
+        ids = [r["harness"] for r in plan["harnesses"]]
+        self.assertIn("claude-code", ids)
+        applied = skillgram.mount_project(sk, proj, apply=True)
+        claude_dir = proj / ".claude" / "skills"
+        names = sorted(p.name for p in claude_dir.iterdir())
+        self.assertEqual(names, ["deploy"])  # 1, no las 2 del hub
+        self.assertTrue(any(r["creados"] for r in applied["harnesses"] if r["harness"] == "claude-code"))
+
+    def test_mount_without_scope_fails_loudly(self):
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        proj = self.tmp / "proj"
+        skillgram.init_project("proj", str(proj))
+        res = skillgram.mount_project(skillgram.Hub(self.hub_root), proj, apply=False)
+        self.assertFalse(res["ok"])
+        self.assertIn("use", res["error"])
+
+    @unittest.skipUnless(sys.platform == "win32", "junctions: Windows only")
+    def test_prune_global_counts_hub_links(self):
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        agent = self.home / ".claude" / "skills"
+        agent.mkdir(parents=True)
+        skillgram.sync(skillgram.Hub(self.hub_root), quiet=True)
+        res = skillgram.prune_global_links(skillgram.Hub(self.hub_root), apply=False)
+        self.assertFalse(res["aplicado"])
+        self.assertGreaterEqual(res.get("pendientes", 0), 1)
+        done = skillgram.prune_global_links(skillgram.Hub(self.hub_root), apply=True)
+        self.assertTrue(done["aplicado"])
+        self.assertEqual([p for p in agent.iterdir() if skillgram.is_link(p)], [])
+
+
+class TestFlavor(HomeCase):
+    def test_detects_agent_wired_skill(self):
+        d = make_skill(self.hub_root, "infra-ops", "wired",
+                       "Corre `claude -p` y usa .claude/ hooks; ver claude code docs.")
+        det = skillgram.detect_flavor(d)
+        self.assertEqual(det["flavor"], "claude")
+        self.assertGreaterEqual(det["score"]["claude"], 2)
+
+    def test_generic_when_no_signal(self):
+        d = make_skill(self.hub_root, "infra-ops", "plain", "Hace cosas genericas.")
+        self.assertEqual(skillgram.detect_flavor(d)["flavor"], "generic")
+
+    def test_meta_sidecar_roundtrip(self):
+        d = make_skill(self.hub_root, "infra-ops", "x")
+        skillgram.write_skill_meta(d, {"flavor": "codex"})
+        self.assertEqual(skillgram.skill_meta(d)["flavor"], "codex")
+
+    def test_port_skips_generic_and_without_llm(self):
+        make_skill(self.hub_root, "infra-ops", "plain", "generica")
+        hub = skillgram.Hub(self.hub_root)
+        self.assertIn("generica", skillgram.port_skill(hub, "plain", "reasonix", None).get("skipped", ""))
+        wired = make_skill(self.hub_root, "infra-ops", "wired", "`claude -p` y .claude/ x")
+        skillgram.write_skill_meta(wired, {"flavor": "claude"})
+        res = skillgram.port_skill(hub, "wired", "reasonix", None)
+        self.assertFalse(res["ok"])
+        self.assertIn("LLM", res["error"])
+
+
+class TestPrecedence(HomeCase):
+    def test_toml_paths_prepended(self):
+        text = '[skills]\npaths = ["C:/a", "C:/b"]\n[kernel]\nx = 1\n'
+        new, changed = skillgram._prepend_toml_paths(text, "C:/hub")
+        self.assertTrue(changed)
+        self.assertIn('["C:/hub", "C:/a", "C:/b"]', new)
+        again, changed2 = skillgram._prepend_toml_paths(new, "C:/hub")
+        self.assertFalse(changed2)
+
+    def test_yaml_external_dirs_prepended(self):
+        text = "model:\n  default: x\nskills:\n  creation_nudge_interval: 15\n"
+        new, changed = skillgram._prepend_yaml_external_dirs(text, "C:/hub")
+        self.assertTrue(changed)
+        self.assertIn("external_dirs:", new)
+        self.assertIn("- C:/hub", new)
+        again, changed2 = skillgram._prepend_yaml_external_dirs(new, "C:/hub")
+        self.assertFalse(changed2)
 if __name__ == "__main__":
     unittest.main()
