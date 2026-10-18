@@ -367,6 +367,13 @@ def _remove_junction(path: Path) -> bool:
         return True
     except OSError:
         pass
+    if os.name != "nt":
+        # POSIX: un symlink a un directorio se borra con unlink, no con rmdir.
+        try:
+            os.unlink(path)
+            return True
+        except OSError:
+            return False
     try:
         subprocess.run(["cmd", "/c", "rmdir", str(path)], check=False, capture_output=True)
         return not os.path.lexists(path)
@@ -374,19 +381,40 @@ def _remove_junction(path: Path) -> bool:
         return False
 
 
+def make_links(pairs: list) -> int:
+    """Crea un enlace por cada (destino, origen). Junctions en Windows, symlinks fuera.
+
+    Windows crea todo en un solo `cmd` porque `mklink` es un builtin. En macOS/Linux
+    no hay `cmd`: sin esta rama el tool entero era Windows-only aunque el README
+    prometiera symlinks.
+    """
+    created = 0
+    if not pairs:
+        return created
+    if os.name == "nt":
+        _run_batch([f'mklink /J "{dest}" "{src}"' for dest, src in pairs])
+    else:
+        for dest, src in pairs:
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                os.symlink(src, dest, target_is_directory=True)
+            except OSError:
+                pass
+    for dest, _src in pairs:
+        if os.path.lexists(dest):
+            created += 1
+    return created
+
+
 def apply_plan(p: Plan, quiet: bool = False) -> dict:
     """Aplica el plan. Devuelve el conteo de lo hecho."""
     created = fixed = removed = 0
 
-    # Los torcidos primero se retiran (mklink no sobrescribe), luego se recrean.
+    # Los torcidos primero se retiran (un enlace no se sobrescribe), luego se recrean.
     for link, _target in p.wrong:
         _remove_junction(link)
     todo = p.missing + list(p.wrong)
-    batch = []
-    for link, target in todo:
-        link.parent.mkdir(parents=True, exist_ok=True)
-        batch.append(f'mklink /J "{link}" "{target}"')
-    _run_batch(batch)
+    make_links(todo)
 
     for link, _target in todo:
         if os.path.lexists(link):
@@ -619,7 +647,7 @@ def promote(hub: Hub, names: list[str], project: Path) -> dict:
             created.append(name)
 
     if batch:
-        _run_batch([f'mklink /J "{d}" "{s}"' for d, s in batch])
+        make_links(batch)
         created = [n for n in created if os.path.lexists(links_dir / n)]
 
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -1148,7 +1176,7 @@ def replace_native_with_link(hub: Hub, imported: list, quarantine: Path) -> dict
         except OSError as exc:
             failed.append(f"{item['skill']}: could not move to quarantine ({exc})")
             continue
-        _run_batch([f'mklink /J "{src}" "{dest}"'])
+        make_links([(src, dest)])
         if os.path.lexists(src):
             linked.append(str(src))
         else:
@@ -1467,7 +1495,7 @@ def adopt_skill(hub: Hub, path: Path, quarantine_root: Path | None = None) -> di
         shutil.move(str(src), str(target))
     except OSError as exc:
         return {"ok": False, "op": "adopt", "path": str(src), "imported": str(dest), "error": f"quarantine: {exc}"}
-    _run_batch([f'mklink /J "{src}" "{dest}"'])
+    make_links([(src, dest)])
     return {
         "ok": os.path.lexists(src),
         "op": "adopt",
@@ -1587,8 +1615,8 @@ def mount_project(hub: Hub, project: Path, apply: bool = False, prune_global: bo
                         removed.append(entry.name)
             if batch and apply:
                 target_dir.mkdir(parents=True, exist_ok=True)
-                _run_batch([f'mklink /J "{d}" "{s}"' for d, s in batch])
-                created = [n for n, _ in ((d.name, s) for d, s in batch) if os.path.lexists(target_dir / n)]
+                make_links(batch)
+                created = [d.name for d, _s in batch if os.path.lexists(d)]
             else:
                 created = [d.name for d, _s in batch]
             rows.append(

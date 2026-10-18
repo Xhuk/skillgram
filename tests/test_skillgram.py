@@ -126,7 +126,6 @@ class TestProjectScope(HomeCase):
         (d / "SKILL.md").write_text("v2", encoding="utf-8")
         self.assertNotEqual(h1, skillgram.skill_hash(d))
 
-    @unittest.skipUnless(sys.platform == "win32", "junctions: Windows only")
     def test_promote_unpromote_and_status(self):
         make_skill(self.hub_root, "infra-ops", "deploy")
         hub = skillgram.Hub(self.hub_root)
@@ -215,7 +214,6 @@ class TestMount(HomeCase):
         self.assertEqual([r["name"] for r in scope["skills"]], ["deploy"])
         self.assertEqual(scope["skills"][0]["tipo"], "infra-ops")
 
-    @unittest.skipUnless(sys.platform == "win32", "junctions: Windows only")
     def test_mount_materializes_only_project_scope(self):
         sk, proj = self._project_with_scope()
         plan = skillgram.mount_project(sk, proj, apply=False)
@@ -549,6 +547,31 @@ class InstallCase(HomeCase):
             skillgram.init_project(name, str(repo))
             skillgram.promote(skillgram.Hub(self.hub_root), ["deploy"], repo)
         return repo
+
+
+class TestLinks(HomeCase):
+    """Link creation must work outside Windows too: CI runs on Linux."""
+
+    def test_make_links_creates_one_link_per_pair(self):
+        target = self.tmp / "hub" / "infra-ops" / "deploy"
+        (target / "sub").mkdir(parents=True)
+        dest = self.tmp / "repo" / ".claude" / "skills" / "deploy"
+        dest.parent.mkdir(parents=True)
+        self.assertEqual(skillgram.make_links([(dest, target)]), 1)
+        self.assertTrue(skillgram.is_link(dest))
+        self.assertEqual(Path(skillgram.link_target(dest)).resolve(), target.resolve())
+        self.assertTrue(skillgram._remove_junction(dest))
+        self.assertFalse(os.path.lexists(dest))
+
+    def test_make_links_never_touches_a_real_directory(self):
+        target = self.tmp / "hub" / "infra-ops" / "deploy"
+        target.mkdir(parents=True)
+        real = self.tmp / "repo" / "skills" / "native"
+        real.mkdir(parents=True)
+        (real / "SKILL.md").write_text("keep me", encoding="utf-8")
+        skillgram.make_links([(real, target)])
+        self.assertTrue((real / "SKILL.md").is_file())
+        self.assertFalse(skillgram.is_link(real))
 
 
 class TestHarnessIdentity(InstallCase):
