@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.1 — the PyPI page stops contradicting itself
+
+The 1.2.0 upload was built from the README *before* the `pip install` fix, so the project page on
+PyPI announced "this is not on PyPI yet, so `pip install skillgram` would fail" right under a
+`pip install skillgram` box. A published description cannot be edited, only republished.
+
+- New `README.pypi.md` and `readme = "README.pypi.md"`: the long description is now Markdown-only
+  (no raw HTML, which PyPI flattens into a line of alt texts) with absolute links, badges, what it
+  is, what it is not, and where the docs live. The GitHub README keeps the centred logo header.
+- `release.yml` moved to Trusted Publishing: `environment: pypi`, `id-token: write`, and
+  `pypa/gh-action-pypi-publish` — no PyPI token and no secret in the repository.
+- Same code as 1.2.0: this release exists to fix what the registry shows.
+
 ## 1.2.0 — the repo ships the skill that teaches an agent to report
 
 - `skills/skillgram-report/SKILL.md`: a real, lint-clean skill — activation contract, hard

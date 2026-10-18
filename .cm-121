@@ -1,0 +1,10 @@
+publish 1.2.1: a Markdown-only long description and Trusted Publishing
+
+The 1.2.0 upload was built from the README before the `pip install` fix, so the PyPI page said
+"this is not on PyPI yet, so pip install skillgram would fail" directly under a pip install box.
+A published description cannot be edited, only republished, hence 1.2.1 with the same code.
+
+- README.pypi.md + readme = "README.pypi.md": the registry gets Markdown only (PyPI flattens raw
+  HTML into a row of alt texts), absolute links, badges and the honest "what it is not".
+- release.yml now publishes with Trusted Publishing: environment pypi, id-token: write,
+  pypa/gh-action-pypi-publish, skip-existing. No PYPI_API_TOKEN, no secret in the repo.
