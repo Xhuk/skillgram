@@ -9,11 +9,13 @@ Claude Code, Codex, Cursor, Hermes, Reasonix, Gemini CLI, OpenCode, Kiro, Qwen
 Code, Aider, DeepSeek harnesses, and anything else that reads `SKILL.md` — sees
 the same library.
 
-**skillgram ships zero skills.** It is the plumbing, not the content.
+**skillgram ships no work skills.** It is the plumbing, not the content — the only skill in
+this repo is [`skills/skillgram-report`](skills/skillgram-report/SKILL.md), which teaches an
+agent how to report a bug or a gap.
 
 ```
 ~/.agents/skills/<tipo>/<skill>/SKILL.md     the hub (the only real copy)
-~/.claude/skills/<skill>                     -> junction to the hub
+~/.claude/skills/<skill>                     -> junction to the hub (symlink off Windows)
 ~/.codex/skills/<skill>                      -> junction to the hub
 ~/.cursor/skills/agent-workflows             -> junction to the category
 %APPDATA%/Reasonix/skills/<skill>            -> junction to the hub
@@ -36,22 +38,20 @@ python skillgram.py install --dry-run   # what it would do, nothing written
 python skillgram.py install             # harness -> hub -> MCP (delegated) -> propagate
 ```
 
-As a package:
+From source (the only way today — this is not on PyPI yet, so `pip install skillgram`
+would fail):
 
 ```bash
-pip install skillgram
-```
-
-From source:
-
-```bash
-git clone <this repo>
+git clone https://github.com/Xhuk/skillgram
 cd skillgram
 python skillgram.py --help
+# or install it as a command:  pip install .
 ```
 
-Stdlib only (Python 3.9+). Windows-first (junctions + `schtasks`), works on
-macOS/Linux with symlinks.
+Stdlib only (Python 3.9+). Junctions on Windows, symlinks on macOS/Linux; the Windows
+`install-autostart` uses `schtasks`, elsewhere use your own cron/launcher.
+
+Status of this repo: CI runs the test suite on Linux for Python 3.9, 3.11 and 3.13.
 
 ## Onboarding: it finds the skills you already have
 
@@ -162,8 +162,11 @@ Every command prints **exactly one JSON line** on stdout (`--json` for the human
 ones too). Exit code `0` healthy, `1` drift/error, `2` bad invocation.
 
 ```json
-{"ok":true,"op":"status","version":"0.1.0","hub":"C:\\Users\\me\\.agents\\skills","skills":841,"tipos":18,"agentes":50,"drift":0}
+{"ok":true,"op":"status","version":"1.2.0","hub":"C:\\Users\\me\\.agents\\skills","skills":842,"categories":18,"nested":12,"agents":50,"drift":0,"watching":false,"missing":0,"mispointed":0,"dead":0,"skipped":2}
 ```
+
+The table above is the dozen commands you will actually type; `skillgram --help` lists all
+of them (there are 33), and `skillgram <command> --help` is the contract for one.
 
 ## How agent discovery works
 
@@ -396,7 +399,8 @@ these remain open by decision:
 4. **Lexical search only.** FTS5 has no embeddings, so synonyms across languages still
    miss (measured: `"cotizar credito hipotecario"` → 1 weak hit).
 5. **No permissions/profiles.** No agent/admin split: anyone with a shell can publish
-   or retire. Engram separates tool profiles.
+   or retire. `mcp --read-only` removes the write tools from an agent session, but it is a
+   per-server switch, not a role. Engram separates tool profiles.
 6. **No taste gate.** `lint` checks shape (frontmatter, `name`, description length, body
    size) and is a hard gate in `propose`, but nothing judges whether a skill is *useful*:
    no eval, no grading, no dry run of the skill itself.
@@ -479,11 +483,11 @@ authored with [archify](https://github.com/tt-a1i/archify).
 
 ## Remaining gaps
 
-1. No semantic search (FTS5 only): cross-language synonyms still miss.
-2. No merge of divergent skills: same name + different content is a conflict to resolve by hand.
-3. No permissions/profile split (agent vs admin). `mcp` could grow a `--read-only`.
-4. No scheduled review; run `skillgram review --days N` from your own cron/CI.
-5. MCP is tools-only (no resources/prompts/sampling).
+There is one list, above ("Known gaps"), and it is kept honest. What used to be here said
+`mcp` "could grow a `--read-only`" and that there was "no CI gate": both shipped in 0.9
+(`skillgram mcp --read-only`, `review --fail-if-stale`). When a gap closes, delete the line
+instead of adding a second list.
+
 ## Read-only MCP, CI gate and diff (0.9)
 
 ```bash
