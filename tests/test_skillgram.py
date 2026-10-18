@@ -295,5 +295,65 @@ class TestPrecedence(HomeCase):
         self.assertIn("- C:/hub", new)
         again, changed2 = skillgram._prepend_yaml_external_dirs(new, "C:/hub")
         self.assertFalse(changed2)
+
+
+class TestBootstrap(HomeCase):
+    def test_signals_from_files(self):
+        proj = self.tmp / "app"
+        (proj).mkdir()
+        (proj / "package.json").write_text('{"dependencies":{"next":"15","@stripe/x":"1"}}', encoding="utf-8")
+        (proj / "Dockerfile").write_text("FROM node", encoding="utf-8")
+        (proj / ".github" / "workflows").mkdir(parents=True)
+        sig = skillgram.repo_signals(proj)
+        self.assertIn("node", sig["files"])
+        self.assertIn("docker", sig["files"])
+        self.assertIn("ci", sig["files"])
+        self.assertIn("next", sig["tags"])
+        self.assertIn("stripe", sig["tags"])
+
+    def test_candidates_ranked_by_signals(self):
+        make_skill(self.hub_root, "infra-ops", "docker-patterns", "docker compose patterns")
+        make_skill(self.hub_root, "design-ui", "archify", "diagramas")
+        hub = skillgram.Hub(self.hub_root)
+        rows = skillgram.candidate_skills(hub, {"tags": ["docker"], "files": [], "deps": []})
+        self.assertEqual(rows[0]["skill"], "docker-patterns")
+        self.assertEqual(len(rows), 1)
+
+    def test_missing_found_and_not_found(self):
+        make_skill(self.hub_root, "infra-ops", "docker-local-deploy", "deploy docker a un vps")
+        hub = skillgram.Hub(self.hub_root)
+        hit = skillgram.missing(hub, "docker deploy vps")
+        self.assertTrue(hit["found"])
+        self.assertEqual(hit["candidates"][0]["skill"], "docker-local-deploy")
+        miss = skillgram.missing(hub, "cotizar credito hipotecario")
+        self.assertFalse(miss["found"])
+        self.assertEqual(miss["candidates"], [])
+
+    def test_bootstrap_without_scope_and_without_llm(self):
+        make_skill(self.hub_root, "infra-ops", "docker-patterns", "docker stuff")
+        proj = self.tmp / "app"
+        proj.mkdir()
+        (proj / "Dockerfile").write_text("x", encoding="utf-8")
+        res = skillgram.bootstrap(skillgram.Hub(self.hub_root), proj, None, apply=False)
+        self.assertEqual(res["op"], "bootstrap")
+        self.assertEqual(res["seleccion"], [])
+        self.assertIn("sin LLM", res["note"])
+        self.assertGreaterEqual(res["candidatas"], 1)
+
+    def test_bootstrap_skips_when_scope_exists(self):
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        proj = self.tmp / "app"
+        sk = skillgram.Hub(self.hub_root)
+        skillgram.init_project("app", str(proj))
+        skillgram.promote(sk, ["deploy"], proj)
+        res = skillgram.bootstrap(sk, proj, None)
+        self.assertIn("ya tiene scope", res["skipped"])
+
+    def test_propose_requires_llm(self):
+        proj = self.tmp / "app"
+        proj.mkdir()
+        res = skillgram.propose_skill(skillgram.Hub(self.hub_root), proj, "ci pipeline", None)
+        self.assertFalse(res["ok"])
+        self.assertIn("LLM", res["error"])
 if __name__ == "__main__":
     unittest.main()

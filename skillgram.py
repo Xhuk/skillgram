@@ -71,7 +71,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto
@@ -1620,6 +1620,271 @@ def prune_global_links(hub: Hub, apply: bool = False) -> dict:
     return {"harness": "*", "retirados": [f"{removed} enlaces"], "aplicado": True}
 
 # ---------------------------------------------------------------------------
+# Bootstrap: repo sin scope -> senales -> candidatas -> seleccion LLM -> registro
+# ---------------------------------------------------------------------------
+#
+# Uso de LLM: explicito y auditado. Solo decide el set inicial, porta flavor y
+# redacta skills nuevas. Nunca borra ni escribe sin aprobacion. Cada decision deja
+# rastro en el manifest (`by`) y en ~/.agents/skillgram-llm.log.
+
+LLM_LOG = HOME / ".agents" / "skillgram-llm.log"
+
+SIGNAL_FILES = {
+    "node": "package.json",
+    "ts": "tsconfig.json",
+    "next": "next.config.js",
+    "go": "go.mod",
+    "python": "pyproject.toml",
+    "rust": "Cargo.toml",
+    "java": "pom.xml",
+    "php": "composer.json",
+    "ruby": "Gemfile",
+    "docker": "Dockerfile",
+    "compose": "docker-compose.yml",
+    "terraform": "main.tf",
+    "prisma": "prisma/schema.prisma",
+}
+
+BOOTSTRAP_SYSTEM = (
+    "You pick which skills from a catalog a repository actually needs. You receive the "
+    "repo signals and the candidate skills (name, category, score, short summary). "
+    'Reply ONLY with JSON: {"selected":[{"skill":"exact-name","why":"max 90 chars"}],'
+    '"gaps":["capability the repo needs and no skill covers"]}. '
+    "Select between 3 and 12 skills. Only exact names from the candidates. Prefer fewer, "
+    "higher-value skills. gaps = concrete missing capabilities, max 5."
+)
+
+SKILL_DRAFT_SYSTEM = (
+    "You write an agent skill (SKILL.md). Reply ONLY with the file content: YAML "
+    "frontmatter with `name` (kebab-case) and `description` (one sentence, <=140 chars), "
+    "then a body with: Activation Contract, Hard Rules, Decision Gates, Execution Steps, "
+    "Output Contract. Be concrete and short (max 120 lines). No fences around the whole file."
+)
+
+
+def llm_log(action: str, detail: dict, model: str = "") -> None:
+    try:
+        LLM_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with LLM_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "action": action,
+                                 "model": model, "detail": detail}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def repo_signals(project: Path) -> dict:
+    """Senales deterministas del repo (sin LLM)."""
+    files = []
+    for tag, rel in SIGNAL_FILES.items():
+        if (project / rel).exists():
+            files.append(tag)
+    for alt in ("compose.yml", "compose.yaml", "docker-compose.yaml"):
+        if (project / alt).exists() and "compose" not in files:
+            files.append("compose")
+    if (project / ".github" / "workflows").is_dir():
+        files.append("ci")
+    if (project / ".env.example").exists() or (project / ".env.sample").exists():
+        files.append("env")
+    deps = []
+    pkg = project / "package.json"
+    if pkg.is_file():
+        try:
+            data = json.loads(pkg.read_text(encoding="utf-8"))
+            deps = sorted(set(list(data.get("dependencies", {}) or {}) +
+                               list(data.get("devDependencies", {}) or {})))[:40]
+        except (OSError, ValueError):
+            pass
+    tags = set(files)
+    for dep in deps:
+        tags.add(dep.split("/")[0].lstrip("@").lower())
+    return {"files": sorted(set(files)), "deps": deps, "tags": sorted(t for t in tags if len(t) > 2)}
+
+
+def candidate_skills(hub: Hub, signals: dict, limit: int = 60) -> list:
+    """Filtro determinista del catalogo: 900 -> ~60 candidatas."""
+    toks = signals["tags"]
+    rows = []
+    for name, tipo in hub.skills().items():
+        try:
+            head = (hub.root / tipo / name / "SKILL.md").read_text(encoding="utf-8", errors="replace")[:1200]
+        except OSError:
+            head = ""
+        hay = f"{name} {tipo} {head}".lower()
+        score = sum(1 for t in toks if t in hay)
+        if score:
+            rows.append({"skill": name, "tipo": tipo, "score": score, "summary": head[:280].replace("\n", " ")})
+    rows.sort(key=lambda r: (-r["score"], r["skill"]))
+    return rows[:limit]
+
+
+def llm_select(cfg: dict, project: Path, signals: dict, candidates: list) -> dict:
+    """La LLM elige el set final y los gaps. Devuelve dict validado."""
+    payload = {
+        "repo": project.name,
+        "signals": signals,
+        "candidates": [
+            {"skill": c["skill"], "category": c["tipo"], "score": c["score"], "summary": c["summary"][:200]}
+            for c in candidates
+        ],
+    }
+    raw = llm_chat(cfg, BOOTSTRAP_SYSTEM, json.dumps(payload, ensure_ascii=False)[:24000])
+    start, end = raw.find("{"), raw.rfind("}")
+    if start < 0 or end <= start:
+        raise OSError("la LLM no devolvio JSON")
+    data = json.loads(raw[start:end + 1])
+    known = {c["skill"] for c in candidates}
+    selected = []
+    for item in data.get("selected", []) or []:
+        name = str(item.get("skill", "")).strip()
+        if name in known:
+            selected.append({"skill": name, "why": str(item.get("why", ""))[:140]})
+    gaps = [str(g)[:160] for g in (data.get("gaps") or [])][:5]
+    return {"selected": selected, "gaps": gaps, "descartadas": len(candidates) - len(selected)}
+
+
+def bootstrap(hub: Hub, project: Path, cfg: dict | None, apply: bool = False) -> dict:
+    """Plan (y opcional aplicacion) del set inicial de un proyecto sin scope."""
+    scope = project_scope(hub, project)
+    if scope["skills"]:
+        return {"ok": True, "op": "bootstrap", "skipped": "el proyecto ya tiene scope",
+                "project": str(project), "skills": len(scope["skills"])}
+    signals = repo_signals(project)
+    candidates = candidate_skills(hub, signals)
+    result = {
+        "ok": True,
+        "op": "bootstrap",
+        "project": str(project),
+        "signals": signals,
+        "candidatas": len(candidates),
+        "seleccion": [],
+        "gaps": [],
+        "aplicado": False,
+        "llm": cfg["model"] if cfg else None,
+    }
+    if not cfg:
+        result["note"] = "sin LLM conectada: solo candidatas (no se elige set)"
+        result["top_candidatas"] = [c["skill"] for c in candidates[:12]]
+        return result
+    selection = llm_select(cfg, project, signals, candidates)
+    llm_log("bootstrap-select", {"project": str(project), "selected": [s["skill"] for s in selection["selected"]],
+                                 "gaps": selection["gaps"], "candidatas": len(candidates)}, cfg["model"])
+    result.update({
+        "seleccion": selection["selected"],
+        "gaps": selection["gaps"],
+        "descartadas": selection["descartadas"],
+    })
+    if apply and selection["selected"]:
+        names = [s["skill"] for s in selection["selected"]]
+        res = promote(hub, names, project)
+        manifest = _read_manifest(project)
+        for item in selection["selected"]:
+            entry = manifest["skills"].get(item["skill"])
+            if entry:
+                entry["why"] = item["why"]
+                entry["by"] = f"llm:{cfg['model']}"
+        manifest["bootstrap_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        _write_manifest(project, manifest)
+        result["aplicado"] = True
+        result["registradas"] = res["creadas"] + res["ya_estaban"]
+    return result
+
+
+def missing(hub: Hub, text: str, limit: int = 8) -> dict:
+    """Consulta determinista: hay skill para esto? (sin LLM)."""
+    toks = [t for t in re_findall_words(text) if len(t) > 2]
+    rows = []
+    for name, tipo in hub.skills().items():
+        try:
+            head = (hub.root / tipo / name / "SKILL.md").read_text(encoding="utf-8", errors="replace")[:1200]
+        except OSError:
+            head = ""
+        hay = f"{name} {tipo} {head}".lower()
+        score = sum(1 for t in toks if t in hay)
+        if score:
+            rows.append({"skill": name, "tipo": tipo, "score": score})
+    rows.sort(key=lambda r: (-r["score"], r["skill"]))
+    return {
+        "ok": True,
+        "op": "missing",
+        "query": text,
+        "found": bool(rows and rows[0]["score"] >= 2),
+        "candidates": rows[:limit],
+    }
+
+
+def re_findall_words(text: str) -> list:
+    out, cur = [], []
+    for ch in text.lower():
+        if ch.isalnum() or ch in "-_":
+            cur.append(ch)
+        elif cur:
+            out.append("".join(cur))
+            cur = []
+    if cur:
+        out.append("".join(cur))
+    return out
+
+
+def propose_skill(hub: Hub, project: Path, need: str, cfg: dict | None, apply: bool = False) -> dict:
+    """Redacta una skill nueva (LLM), la valida y (con apply) la publica + registra."""
+    if not cfg:
+        return {"ok": False, "op": "propose", "error": "no hay LLM conectada configurada"}
+    signals = repo_signals(project)
+    prompt = (
+        f"need: {need}\nrepo: {project.name}\nsignals: {', '.join(signals['files'])}\n"
+        f"categories available: {', '.join(hub.tipos()) or 'any'}"
+    )
+    try:
+        draft = llm_chat(cfg, SKILL_DRAFT_SYSTEM, prompt).strip()
+    except OSError as exc:
+        return {"ok": False, "op": "propose", "error": str(exc)}
+    if draft.startswith("```"):
+        draft = draft.strip("`").split("\n", 1)[-1].rsplit("```", 1)[0]
+    name = ""
+    for line in draft.splitlines()[:12]:
+        if line.strip().lower().startswith("name:"):
+            name = line.split(":", 1)[1].strip().strip('"').strip("'")
+            break
+    ok_front = draft.startswith("---") and "description:" in draft[:600] and bool(name)
+    result = {
+        "ok": ok_front,
+        "op": "propose",
+        "skill": name,
+        "valida": ok_front,
+        "caracteres": len(draft),
+        "llm": cfg["model"],
+        "aplicado": False,
+    }
+    if not ok_front:
+        result["error"] = "el borrador no tiene frontmatter valido (name + description)"
+        result["draft_head"] = draft[:400]
+        return result
+    if name in hub.skills():
+        result["ok"] = False
+        result["error"] = f"ya existe una skill llamada {name} en el hub"
+        return result
+    if not apply:
+        result["draft_head"] = draft[:600]
+        return result
+    tipo = _heuristic_category(name, hub.tipos())
+    dest = hub.root / tipo / name
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / "SKILL.md").write_text(draft if draft.endswith("\n") else draft + "\n", encoding="utf-8")
+    write_skill_meta(dest, {"flavor": GENERIC_FLAVOR, "by": f"llm:{cfg['model']}",
+                            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
+    res = promote(hub, [name], project)
+    manifest = _read_manifest(project)
+    entry = manifest["skills"].get(name)
+    if entry:
+        entry["why"] = f"creada por skillgram para: {need[:120]}"
+        entry["by"] = f"llm:{cfg['model']}"
+    _write_manifest(project, manifest)
+    llm_log("propose-skill", {"skill": name, "tipo": tipo, "need": need[:200], "project": str(project)}, cfg["model"])
+    result.update({"ok": True, "aplicado": True, "tipo": tipo, "hub": str(dest),
+                   "registradas": res["creadas"] + res["ya_estaban"]})
+    return result
+
+# ---------------------------------------------------------------------------
 # Log y estado
 # ---------------------------------------------------------------------------
 
@@ -1876,6 +2141,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_mount.add_argument("--project", help="carpeta del proyecto (default: resolucion tipo engram)")
     p_mount.add_argument("--apply", action="store_true", help="crea/retira los enlaces (si falta: solo el plan)")
     p_mount.add_argument("--prune-global", action="store_true", help="ademas retira los enlaces al hub de los homes (strict)")
+    p_boot = sub.add_parser("bootstrap", parents=[common], help="repo sin scope: senales + LLM elige el set inicial (y reporta gaps)")
+    p_boot.add_argument("--project")
+    p_boot.add_argument("--apply", action="store_true", help="registra el set elegido en el proyecto")
+    p_boot.add_argument("--no-llm", action="store_true")
+    p_miss = sub.add_parser("missing", parents=[common], help="consulta determinista: hay skill para esto?")
+    p_miss.add_argument("text", nargs="+")
+    p_miss.add_argument("--project")
+    p_prop = sub.add_parser("propose", parents=[common], help="redacta una skill nueva con la LLM y (con --apply) la publica")
+    p_prop.add_argument("need", nargs="+")
+    p_prop.add_argument("--project")
+    p_prop.add_argument("--apply", action="store_true", help="publica en el hub, registra y monta")
+    p_prop.add_argument("--no-llm", action="store_true")
     sub.add_parser("doctor", parents=[common], help="inventario: harnesss, nativas, colisiones, drift")
     p_status = sub.add_parser("status", parents=[common], help="drift actual sin tocar nada")
     p_status.add_argument("--verify", action="store_true", help="ademas verifica a donde apunta cada enlace (lento)")
@@ -1927,6 +2204,20 @@ def main(argv: list[str] | None = None) -> int:
             result = port_missing(hub, targets, cfg, apply=args.apply)
     elif args.cmd == "precedence":
         result = apply_precedence(hub, apply=args.apply)
+    elif args.cmd == "bootstrap":
+        proj = resolve_project(args.project)
+        cfg = None if args.no_llm else llm_config()
+        result = bootstrap(hub, Path(proj["path"]), cfg, apply=args.apply)
+        result["resolucion"] = proj["source"]
+    elif args.cmd == "missing":
+        proj = resolve_project(args.project)
+        result = missing(hub, " ".join(args.text))
+        result["project"] = str(proj["path"])
+    elif args.cmd == "propose":
+        proj = resolve_project(args.project)
+        cfg = None if args.no_llm else llm_config()
+        result = propose_skill(hub, Path(proj["path"]), " ".join(args.need), cfg, apply=args.apply)
+        result["resolucion"] = proj["source"]
     elif args.cmd == "mount":
         proj = resolve_project(args.project)
         result = mount_project(hub, Path(proj["path"]), apply=args.apply, prune_global=args.prune_global)
@@ -2061,6 +2352,20 @@ def main(argv: list[str] | None = None) -> int:
             result = port_missing(hub, targets, cfg, apply=args.apply)
     elif args.cmd == "precedence":
         result = apply_precedence(hub, apply=args.apply)
+    elif args.cmd == "bootstrap":
+        proj = resolve_project(args.project)
+        cfg = None if args.no_llm else llm_config()
+        result = bootstrap(hub, Path(proj["path"]), cfg, apply=args.apply)
+        result["resolucion"] = proj["source"]
+    elif args.cmd == "missing":
+        proj = resolve_project(args.project)
+        result = missing(hub, " ".join(args.text))
+        result["project"] = str(proj["path"])
+    elif args.cmd == "propose":
+        proj = resolve_project(args.project)
+        cfg = None if args.no_llm else llm_config()
+        result = propose_skill(hub, Path(proj["path"]), " ".join(args.need), cfg, apply=args.apply)
+        result["resolucion"] = proj["source"]
     elif args.cmd == "mount":
         proj = resolve_project(args.project)
         result = mount_project(hub, Path(proj["path"]), apply=args.apply, prune_global=args.prune_global)

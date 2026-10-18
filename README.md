@@ -265,3 +265,52 @@ installs, port the flavor when a skill is wired to another agent).
 `--prune-global` is the strict switch: it removes the hub links from the harness
 homes (only links that resolve into the hub; native skills stay). After that, a
 harness outside a project sees nothing from the hub — by design.
+## Two modes: bootstrap (LLM decides) and régime (skillgram only serves)
+
+skillgram is explicit about this: **a connected LLM is used to administer the
+library**, and only in two places — choosing a project's initial set, and writing
+a skill that does not exist yet. It never deletes, and never writes without
+approval. Every automatic decision is stamped `by: llm:<model>` in the project
+manifest and logged to `~/.agents/skillgram-llm.log`. `doctor` reports which model
+is connected; `--no-llm` and `SKILLGRAM_LLM=off` turn it off.
+
+### Bootstrap — a repo with no scope yet
+
+```bash
+skillgram bootstrap            # asks for confirmation; add --apply to register
+skillgram bootstrap --apply    # register the chosen set in this project
+```
+
+1. **Deterministic signals** from the repo (`package.json`/deps, `go.mod`,
+   `Dockerfile`, `compose`, CI, `prisma`, `.env.example`, ...).
+2. **Catalog filter**: 900 skills → ~50 candidates by category, name and text match.
+3. **The LLM picks the set and justifies each one**, plus the gaps it sees:
+   `{"selected":[{"skill":"docker-patterns","why":"repo has Docker"}], "gaps":["CI config"]}`.
+4. `--apply` registers them with `why` + `by` in `.agents/skills.json`.
+
+### Filling a gap
+
+```bash
+skillgram propose "github actions CI for a dockerized node app"           # draft only
+skillgram propose "github actions CI for a dockerized node app" --apply   # publish + register
+```
+
+The LLM writes the `SKILL.md` (frontmatter + Activation Contract / Hard Rules /
+Decision Gates / Execution Steps / Output Contract). skillgram **validates** it
+(frontmatter, unique name, non-empty body), publishes it into the hub, registers it
+in the project and mounts it. Nothing is published without `--apply`.
+
+### Régime — a project that already has skills
+
+No LLM. skillgram just serves the set and answers "do we have something for this?":
+
+```bash
+skillgram missing "deploy to a vps"
+# {"found": true, "candidates": [{"skill": "docker-local-vps-deploy", "score": 3}]}
+skillgram missing "quote a mortgage"
+# {"found": false, "candidates": []}
+```
+
+When `found` is `false`, skillgram stops there: **the agent** (Hermes, Claude,
+Codex, Reasonix, ...) is the one that proposes something to the user. skillgram
+only administers.
