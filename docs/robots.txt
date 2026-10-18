@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://xhuk.github.io/skillgram/sitemap.xml

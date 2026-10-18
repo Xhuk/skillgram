@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>skillgram — skill management for AI agents (skill hub + registry)</title>
+<meta name="description" content="skillgram is a skill hub and admin layer for AI agents: one SKILL.md library on disk, linked into Claude Code, Codex, Cursor, Hermes, Reasonix and any harness that reads skills. No copies, no drift.">
+<meta name="keywords" content="skill management for AI agents, admin skills, agent skills, skill registry, skill library, SKILL.md, Claude Code skills, Codex, Cursor, Hermes, Reasonix, MCP">
+<link rel="canonical" href="https://xhuk.github.io/skillgram/">
+<meta property="og:title" content="skillgram — skill management for AI agents">
+<meta property="og:description" content="One skill library, linked into every coding agent. Links instead of copies, project scope, and an MCP server so the agent can ask the hub.">
+<meta property="og:image" content="https://xhuk.github.io/skillgram/logo.png">
+<meta property="og:type" content="website">
+<link rel="icon" href="logo.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "skillgram",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Windows, macOS, Linux",
+  "description": "A skill hub and admin layer for AI coding agents: one SKILL.md library on disk, linked into every harness, with per-project scope and an MCP server.",
+  "url": "https://xhuk.github.io/skillgram/",
+  "downloadUrl": "https://github.com/Xhuk/skillgram",
+  "license": "https://opensource.org/licenses/MIT",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+<style>
+  :root {
+    --bg: #fbfaf8; --fg: #1b1b1a; --muted: #6b6a66; --line: #e2e0da;
+    --card: #ffffff; --accent: #b5523a; --code: #f2f0ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141413; --fg: #ecebe6; --muted: #a3a19a; --line: #2c2b28;
+             --card: #1c1c1a; --accent: #e08563; --code: #22221f; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 64px 24px 96px; }
+  header { display: flex; align-items: center; gap: 20px; margin-bottom: 40px; }
+  header img { width: 72px; height: 72px; border-radius: 16px; }
+  h1 { font-size: 34px; line-height: 1.15; margin: 0 0 6px; letter-spacing: -0.02em; }
+  .tagline { color: var(--muted); margin: 0; font-size: 17px; }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+       margin: 44px 0 12px; font-weight: 600; }
+  p { margin: 0 0 14px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+  code { background: var(--code); padding: 2px 5px; border-radius: 4px; font-size: 0.9em; }
+  pre { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+        padding: 16px 18px; overflow-x: auto; font-size: 14px; line-height: 1.55; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  ul { padding-left: 20px; margin: 0 0 14px; }
+  li { margin-bottom: 6px; }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .card b { display: block; margin-bottom: 4px; }
+  .card span { color: var(--muted); font-size: 14px; }
+  footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line);
+           color: var(--muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 8px 20px; }
+  .note { border-left: 3px solid var(--accent); padding: 2px 0 2px 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="logo.png" alt="">
+    <div>
+      <h1>skillgram</h1>
+      <p class="tagline">Skill management for AI agents. One library, linked into every agent.</p>
+    </div>
+  </header>
+
+  <p>skillgram is a <b>skill hub</b> — a registry of <code>SKILL.md</code> files that lives in one
+  directory on disk — plus the admin layer that keeps every agent pointing at it. Claude Code,
+  Codex, Cursor, Hermes, Reasonix, Gemini CLI, OpenCode, Kiro, Qwen Code, Aider and Copilot all
+  read the same library.</p>
+
+  <p class="note">Links instead of copies. Per-project scope. An MCP server so the agent can ask
+  the hub. No LLM in the loop unless you ask for one.</p>
+
+  <h2>Install</h2>
+<pre><code>git clone https://github.com/Xhuk/skillgram
+cd skillgram
+python skillgram.py install --dry-run   # the exact commands, nothing written
+python skillgram.py install             # harness -&gt; hub -&gt; MCP -&gt; project scope</code></pre>
+  <p>Python 3.9+, standard library only. Junctions on Windows, symlinks on macOS/Linux.</p>
+
+  <h2>The model</h2>
+  <div class="grid">
+    <div class="card"><b>One hub</b><span><code>~/.agents/skills/&lt;category&gt;/&lt;skill&gt;/SKILL.md</code> is the only real copy.</span></div>
+    <div class="card"><b>One link per skill</b><span>Each harness gets a junction (or symlink) in its own <code>skills/</code> folder.</span></div>
+    <div class="card"><b>Native skills untouched</b><span>A name collision is skipped and reported, never overwritten.</span></div>
+    <div class="card"><b>Project scope</b><span><code>use</code> + <code>mount</code> give a repo exactly its set, not the whole library.</span></div>
+    <div class="card"><b>Ask the hub</b><span><code>skillgram mcp</code> exposes search / missing / use / status / propose to the agent.</span></div>
+    <div class="card"><b>Idempotent</b><span>Every command prints one JSON line and can run twice without changing anything.</span></div>
+  </div>
+
+  <h2>What it is not</h2>
+  <p>Not a prompt manager, not a memory store, not an embeddings index. It links and administers
+  skills your agents already read, and it never guesses which harness is asking.</p>
+
+  <h2>Read more</h2>
+  <ul>
+    <li><a href="https://github.com/Xhuk/skillgram">Repository and README</a></li>
+    <li><a href="https://github.com/Xhuk/skillgram/blob/main/INSTALL.md">Install brief (copy-paste for an agent session)</a></li>
+    <li><a href="diagrams/skillgram-install.html">The install flow, as an interactive diagram</a></li>
+    <li><a href="https://github.com/Xhuk/skillgram/blob/main/CHANGELOG.md">Changelog</a></li>
+    <li><a href="https://github.com/Xhuk/skillgram/blob/main/skills/skillgram-report/SKILL.md">How an agent should report a bug or a gap</a></li>
+  </ul>
+
+  <footer>
+    <span>MIT</span>
+    <span id="version">v1.2.0</span>
+    <a href="https://github.com/Xhuk/skillgram/issues/new/choose">Report a bug or ask for a skill</a>
+  </footer>
+</main>
+</body>
+</html>

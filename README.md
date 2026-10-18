@@ -1,5 +1,13 @@
 <p align="center"><img src="assets/logo.png" alt="skillgram" width="120"></p>
 
+<p align="center">
+  <a href="https://github.com/Xhuk/skillgram/actions/workflows/ci.yml"><img src="https://github.com/Xhuk/skillgram/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Xhuk/skillgram/releases/latest"><img src="https://img.shields.io/github/v/release/Xhuk/skillgram?color=b5523a" alt="Release"></a>
+  <a href="https://xhuk.github.io/skillgram/"><img src="https://img.shields.io/badge/site-xhuk.github.io%2Fskillgram-b5523a" alt="Site"></a>
+  <img src="https://img.shields.io/badge/python-3.9%2B-3776ab" alt="Python 3.9+">
+  <img src="https://img.shields.io/badge/deps-none-success" alt="No dependencies">
+</p>
+
 <h1 align="center">skillgram</h1>
 
 <p align="center"><strong>Skill management for AI agents:</strong> one skill library, linked into every coding agent.<br>
