@@ -16,3 +16,4 @@ docs/diagrams/*.delivery-pending.json
 docs/diagrams/*.finalize*.json
 docs/diagrams/*.browser-check.json
 docs/diagrams/*.visual-check*
+.cm-*
