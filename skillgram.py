@@ -71,7 +71,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto
@@ -1785,7 +1785,7 @@ def bootstrap(hub: Hub, project: Path, cfg: dict | None, apply: bool = False) ->
         manifest["bootstrap_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
         _write_manifest(project, manifest)
         result["applied"] = True
-        result["registradas"] = res["created"] + res["ya_estaban"]
+        result["registradas"] = res["created"] + res["already_present"]
     return result
 
 
@@ -1890,7 +1890,7 @@ def propose_skill(hub: Hub, project: Path, need: str, cfg: dict | None, apply: b
     _write_manifest(project, manifest)
     llm_log("propose-skill", {"skill": name, "tipo": tipo, "need": need[:200], "project": str(project)}, cfg["model"])
     result.update({"ok": True, "applied": True, "tipo": tipo, "hub": str(dest),
-                   "registradas": res["created"] + res["ya_estaban"]})
+                   "registradas": res["created"] + res["already_present"]})
     return result
 
 # ---------------------------------------------------------------------------
@@ -2747,6 +2747,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_mount.add_argument("--apply", action="store_true", help="crea/retira los links (si falta: solo el plan)")
     p_mount.add_argument("--prune-global", action="store_true", help="ademas retira los links al hub de los homes (strict)")
     p_mount.add_argument("--no-protocol", action="store_true", help="do not inject the skillgram protocol into AGENTS.md/CLAUDE.md")
+    p_mount.add_argument("--bootstrap", dest="bootstrap", action="store_true", default=None,
+                         help="if the repo has no scope, bootstrap it with the connected LLM first (default: ask)")
+    p_mount.add_argument("--no-bootstrap", dest="bootstrap", action="store_false", help="never bootstrap from mount")
+    p_mount.add_argument("--yes", "-y", action="store_true", help="assume yes for the bootstrap confirmation")
     p_boot = sub.add_parser("bootstrap", parents=[common], help="repo without scope: signals + LLM picks the initial set (and reports gaps)")
     p_boot.add_argument("--project")
     p_boot.add_argument("--apply", action="store_true", help="registra el set elegido en el proyecto")
@@ -2887,9 +2891,28 @@ def main(argv: list[str] | None = None) -> int:
         result["resolucion"] = proj["source"]
     elif args.cmd == "mount":
         proj = resolve_project(args.project)
-        result = mount_project(hub, Path(proj["path"]), apply=args.apply, prune_global=args.prune_global)
-        if args.apply and not getattr(args, "no_protocol", False):
-            result["protocol"] = inject_protocol(hub, Path(proj["path"]), apply=True)
+        root = Path(proj["path"])
+        result = mount_project(hub, root, apply=args.apply, prune_global=args.prune_global)
+        if not result.get("ok") and args.bootstrap is not False:
+            cfg = llm_config()
+            want = args.bootstrap is True or bool(args.yes)
+            if cfg and args.apply and not want:
+                ans = ""
+                try:
+                    if sys.stdin.isatty() and not getattr(args, "json", False):
+                        ans = input(f"no skills in scope for {root.name}; bootstrap it now? [y/N]: ")
+                except (EOFError, OSError):
+                    ans = ""
+                want = ans.strip().lower().startswith("y")
+            if cfg and args.apply and want:
+                result["bootstrap"] = bootstrap(hub, root, cfg, apply=True)
+                if result["bootstrap"].get("applied"):
+                    result = mount_project(hub, root, apply=True, prune_global=args.prune_global)
+                    result["bootstrap"] = "done"
+            elif not cfg:
+                result["bootstrap_hint"] = "no LLM configured: run `skillgram use <skill>...` in this repo"
+        if result.get("ok") and args.apply and not getattr(args, "no_protocol", False):
+            result["protocol"] = inject_protocol(hub, root, apply=True)
         result["resolucion"] = proj["source"]
         result["resolucion"] = proj["source"]
     elif args.cmd == "adopt":
@@ -3067,9 +3090,28 @@ def main(argv: list[str] | None = None) -> int:
         result["resolucion"] = proj["source"]
     elif args.cmd == "mount":
         proj = resolve_project(args.project)
-        result = mount_project(hub, Path(proj["path"]), apply=args.apply, prune_global=args.prune_global)
-        if args.apply and not getattr(args, "no_protocol", False):
-            result["protocol"] = inject_protocol(hub, Path(proj["path"]), apply=True)
+        root = Path(proj["path"])
+        result = mount_project(hub, root, apply=args.apply, prune_global=args.prune_global)
+        if not result.get("ok") and args.bootstrap is not False:
+            cfg = llm_config()
+            want = args.bootstrap is True or bool(args.yes)
+            if cfg and args.apply and not want:
+                ans = ""
+                try:
+                    if sys.stdin.isatty() and not getattr(args, "json", False):
+                        ans = input(f"no skills in scope for {root.name}; bootstrap it now? [y/N]: ")
+                except (EOFError, OSError):
+                    ans = ""
+                want = ans.strip().lower().startswith("y")
+            if cfg and args.apply and want:
+                result["bootstrap"] = bootstrap(hub, root, cfg, apply=True)
+                if result["bootstrap"].get("applied"):
+                    result = mount_project(hub, root, apply=True, prune_global=args.prune_global)
+                    result["bootstrap"] = "done"
+            elif not cfg:
+                result["bootstrap_hint"] = "no LLM configured: run `skillgram use <skill>...` in this repo"
+        if result.get("ok") and args.apply and not getattr(args, "no_protocol", False):
+            result["protocol"] = inject_protocol(hub, root, apply=True)
         result["resolucion"] = proj["source"]
         result["resolucion"] = proj["source"]
     elif args.cmd == "adopt":

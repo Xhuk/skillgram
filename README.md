@@ -414,3 +414,17 @@ skillgram diff <skill> --against <path>      # divergence between two copies of 
 `diff` is what you reach for when the hub lives in git and two machines changed the
 same skill: it tells you which files differ, which exist only here and which only
 there. Merging stays a human (or LLM) decision — skillgram never guesses.
+## `mount` from any repo
+
+`mount` resolves the project like engram (cwd → nearest `.agents/config.json` up to
+the git root), so you can run it from **any repo, any subdirectory**. If that repo
+has no skills in scope yet, `mount` offers to bootstrap it with the connected LLM:
+
+```bash
+cd ~/code/my-repo/subdir
+skillgram mount --apply --yes     # no scope -> LLM picks the set -> mount -> protocol
+skillgram mount --apply --no-bootstrap   # never bootstrap, only mount what exists
+```
+
+Then it propagates that set to every harness that reads project-level dirs, and
+writes the skillgram protocol into `AGENTS.md`/`CLAUDE.md`.
