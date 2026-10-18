@@ -8,6 +8,13 @@ on:
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
+    # Trusted Publishing: the job proves who it is with a short-lived OIDC token,
+    # so there is no PyPI secret anywhere. The environment name must match the one
+    # registered on PyPI (project -> Publishing) and in the repository settings.
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -24,10 +31,8 @@ jobs:
           python -m build
           python -m twine check dist/*
 
-      # PyPI: the username for an API token is the literal `__token__`, never the
-      # account name. --skip-existing keeps a re-run harmless.
       - name: Publish to PyPI
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: python -m twine upload --non-interactive --skip-existing --verbose dist/*
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+          verbose: true
