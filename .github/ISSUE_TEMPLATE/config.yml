@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: How to install skillgram (brief for an agent session)
+    url: https://github.com/Xhuk/skillgram/blob/main/INSTALL.md
+    about: Most "it does not work" reports are a launcher or harness-home mismatch. INSTALL.md lists the exact commands, the env switches and the traps.
+  - name: Known gaps and the two channels (gap vs bug)
+    url: https://github.com/Xhuk/skillgram/blob/main/README.md#a-gap-is-a-request-a-bug-is-not
+    about: A gap is a request (demand log + propose). A bug is a JSON line with ok:false and a non-zero exit.

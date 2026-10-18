@@ -1,0 +1,66 @@
+name: Skill request
+description: The hub has nothing for a capability you needed. A gap is a request, not a bug.
+title: "[skill] "
+labels: ["skill-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A gap is the normal state of a skill hub: 841 skills and still no answer for
+        everything. Two things make a request actionable:
+
+        1. the query you tried, so the demand log and this issue line up;
+        2. when you would use the skill, in concrete terms (a command, a decision, a file).
+
+        `skillgram demand` already ranks the queries nobody could answer on your machine —
+        if yours is there, say how many times.
+  - type: input
+    id: capability
+    attributes:
+      label: Capability you need
+      description: As a verb phrase, not a category. "Quote a mortgage in Mexico", not "finance".
+      placeholder: Quote a mortgage with the bank's rate table and generate the amortization schedule
+    validations:
+      required: true
+  - type: input
+    id: query
+    attributes:
+      label: What you asked the hub
+      description: The lookup that came back empty (CLI or MCP tool).
+      placeholder: 'skillgram missing "quote a mortgage"'
+    validations:
+      required: true
+  - type: textarea
+    id: missing-output
+    attributes:
+      label: What it answered
+      description: 'Paste `{"found": false, ...}` (or the closest wrong candidates, which are also useful).'
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: use-case
+    attributes:
+      label: When would you use it
+      description: The concrete moment, with the repo/tool/file involved.
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Is this a skill, or something skillgram itself is missing?
+      description: This decides where the work lands — a portable `SKILL.md`, or a change in the tool.
+      options:
+        - A skill (SKILL.md) is enough
+        - skillgram itself would have to change
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: harness
+    attributes:
+      label: Harness you were working in (optional)
+      description: A skill can be portable or wired to one agent; knowing the target helps.
+      placeholder: "Reasonix / Claude Code / Codex / Hermes / Cursor / ..."
+    validations:
+      required: false

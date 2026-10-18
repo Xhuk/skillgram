@@ -447,6 +447,11 @@ What the agent must never do: invent a skill to paper over a gap, or describe a 
 "a skill we should add". The protocol block injected into each project says exactly this,
 and `mcp --read-only` removes the write tools entirely for untrusted sessions.
 
+The repo ships both forms — `.github/ISSUE_TEMPLATE/bug_report.yml` and
+`skill_request.yml` — so a report arrives with the command, the output and the exit code
+instead of a paragraph. `config.yml` routes install failures to [INSTALL.md](INSTALL.md)
+first, because that is what most of them are.
+
 ## Remaining gaps
 
 1. No semantic search (FTS5 only): cross-language synonyms still miss.

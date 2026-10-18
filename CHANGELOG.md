@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.3 — issue templates (no behaviour change)
+
+- `.github/ISSUE_TEMPLATE/bug_report.yml`: command, output + exit code, environment,
+  optional `doctor --json`. A bug is never a skill.
+- `.github/ISSUE_TEMPLATE/skill_request.yml`: the query you tried, what `missing` answered,
+  when you would use it, and whether a portable `SKILL.md` is enough or the tool has to change.
+- `config.yml`: no blank issues, and install failures are routed to `INSTALL.md` first.
+
 ## 1.1.2 — credits, and where gaps/errors go
 
 - README: **Prior art and credits** — Engram (project scope, CLI+MCP shape), Agent Skills

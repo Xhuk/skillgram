@@ -1,0 +1,68 @@
+name: Bug report
+description: skillgram itself failed — a wrong link, a wrong command, a crash, a lie in the output.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A bug is **not** a skill. If the hub simply has nothing for a capability you needed,
+        that is a skill request — open that template instead.
+
+        Smallest useful report: the exact command, the exit code, and the one JSON line
+        skillgram printed (add `--json` for the machine form).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: One or two sentences. What did skillgram do that it should not have?
+      placeholder: "`install --harness hermes` printed `registered` but nothing was written to config.yaml."
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Exact command
+      description: Copy it as you ran it, including the cwd if it matters.
+      placeholder: 'cd C:\Users\me && python C:\proyectos\skillgram\skillgram.py install --harness codex'
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output and exit code
+      description: Paste the JSON line (or the whole `--json` output) and the exit code.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: false
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, skillgram version, and the harness (plus its launcher if you used SKILLGRAM_MCP_CLI_*).
+      placeholder: "Windows 11, Python 3.14.3, skillgram 1.1.2, Codex via C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd"
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`skillgram doctor --json` (optional)"
+      description: It is read-only and it answers most questions about links and harnesses. Strip any path you do not want public.
+      render: json
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before you file
+      options:
+        - label: I re-ran it twice — `install`/`sync`/`mount` are meant to be idempotent, and a second run that fixes it is still a bug worth reporting.
+          required: false
+        - label: I removed secrets and personal paths from the output above.
+          required: true
