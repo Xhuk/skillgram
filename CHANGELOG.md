@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.0 — the repo ships the skill that teaches an agent to report
+
+- `skills/skillgram-report/SKILL.md`: a real, lint-clean skill — activation contract, hard
+  rules, decision gates, execution steps, output contract — that tells an agent how to file a
+  bug or a gap with evidence: capture the command, the exit code and one JSON line, read the
+  harness config back **after** the command that claimed success, redact, then open the issue.
+  A bug is never filed as a skill; a gap is never filed as a bug. It is the only skill this
+  repo ships, and installing it is a copy plus `skillgram index` / `sync`.
+- `docs/diagrams/skillgram-install.html`: the install flow as a standalone interactive diagram
+  (source in `docs/diagrams/skillgram-install.json`): resolve the harness → verify the hub →
+  probe → delegate the add → **re-read the config** → propagate → report, with the hard stops.
+  Authored with archify; validation, delivery, strict check and the browser gate all pass.
+  Its receipts and captures are gitignored: they are regenerable evidence, not source.
+- README: both linked, with how to put the skill into your own hub.
+
 ## 1.1.3 — issue templates (no behaviour change)
 
 - `.github/ISSUE_TEMPLATE/bug_report.yml`: command, output + exit code, environment,

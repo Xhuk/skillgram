@@ -1,0 +1,235 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "skillgram install: one idempotent command",
+    "locale": "en",
+    "output": "docs/diagrams/skillgram-install.html",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    {
+      "id": "identity",
+      "label": "Harness identity"
+    },
+    {
+      "id": "hub",
+      "label": "Hub"
+    },
+    {
+      "id": "mcp",
+      "label": "MCP registration (delegated)"
+    },
+    {
+      "id": "repos",
+      "label": "Project scope"
+    },
+    {
+      "id": "report",
+      "label": "Report"
+    },
+    {
+      "id": "fallback",
+      "label": "Hard stop",
+      "variant": "exception"
+    }
+  ],
+  "phases": [
+    {
+      "id": "phase_identify",
+      "label": "Identify + verify hub",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "phase_register",
+      "label": "Register the MCP",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "phase_propagate",
+      "label": "Propagate + report",
+      "fromCol": 4,
+      "toCol": 4
+    }
+  ],
+  "groups": [
+    {
+      "id": "delegation",
+      "label": "The harness owns its config: read it back",
+      "lane": "mcp",
+      "fromCol": 2,
+      "toCol": 4,
+      "variant": "emphasis"
+    }
+  ],
+  "mainPath": [
+    "resolve",
+    "hub_check",
+    "probe",
+    "add",
+    "verify",
+    "propagate",
+    "report"
+  ],
+  "nodes": [
+    {
+      "id": "resolve",
+      "lane": "identity",
+      "col": 0,
+      "type": "external",
+      "label": "Resolve the harness",
+      "sublabel": "SKILLGRAM_HARNESS → --harness → process tree",
+      "tag": "never guessed"
+    },
+    {
+      "id": "hub_check",
+      "lane": "hub",
+      "col": 1,
+      "type": "database",
+      "label": "Verify the hub",
+      "sublabel": "~/.agents/skills, 841 skills",
+      "tag": "created if missing"
+    },
+    {
+      "id": "probe",
+      "lane": "mcp",
+      "col": 2,
+      "type": "backend",
+      "label": "Probe the server",
+      "sublabel": "<harness> mcp get skillgram",
+      "tag": "read-only"
+    },
+    {
+      "id": "add",
+      "lane": "mcp",
+      "col": 3,
+      "type": "backend",
+      "label": "Delegate the add",
+      "sublabel": "<harness> mcp add --env=…",
+      "tag": "no hand edits"
+    },
+    {
+      "id": "verify",
+      "lane": "mcp",
+      "col": 4,
+      "type": "security",
+      "label": "Re-read the config",
+      "sublabel": "an exit code is not proof",
+      "tag": "hard gate"
+    },
+    {
+      "id": "propagate",
+      "lane": "repos",
+      "col": 4,
+      "type": "backend",
+      "label": "Propagate the scope",
+      "sublabel": "skip ledger · mount --apply · protocol",
+      "tag": "project only"
+    },
+    {
+      "id": "report",
+      "lane": "report",
+      "col": 4,
+      "type": "messagebus",
+      "label": "Report three blocks",
+      "sublabel": "done · already · to take effect",
+      "tag": "+ needs you"
+    },
+    {
+      "id": "unknown",
+      "lane": "fallback",
+      "col": 0,
+      "type": "security",
+      "label": "Say unknown",
+      "sublabel": "ask for --harness, stop",
+      "tag": "exit 1"
+    },
+    {
+      "id": "no_cli",
+      "lane": "fallback",
+      "col": 2,
+      "type": "security",
+      "label": "No CLI to delegate to",
+      "sublabel": "Cursor: register in the UI",
+      "tag": "reported"
+    }
+  ],
+  "edges": [
+    {
+      "from": "resolve",
+      "to": "hub_check"
+    },
+    {
+      "from": "hub_check",
+      "to": "probe"
+    },
+    {
+      "from": "probe",
+      "to": "add",
+      "label": "not registered"
+    },
+    {
+      "from": "add",
+      "to": "verify",
+      "label": "re-read",
+      "variant": "emphasis"
+    },
+    {
+      "from": "verify",
+      "to": "propagate",
+      "label": "registered"
+    },
+    {
+      "from": "propagate",
+      "to": "report",
+      "label": "links + protocol"
+    },
+    {
+      "from": "resolve",
+      "to": "unknown",
+      "label": "nothing matched",
+      "variant": "security",
+      "role": "error"
+    },
+    {
+      "from": "probe",
+      "to": "no_cli",
+      "label": "no CLI",
+      "variant": "security",
+      "role": "error"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Never, by design",
+      "items": [
+        "No harness config is edited by hand",
+        "No skill is copied: links only, soft-mounted per skill",
+        "An unrecognized harness is reported, not guessed",
+        "A real directory is never deleted"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "An exit code is not proof",
+      "items": [
+        "hermes asks \"Enable all N tools?\" and exits 0 after cancelling it",
+        "So the config is read again after the add",
+        "A silent no-op is reported as failed, never as success"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "What the run tells you",
+      "items": [
+        "done now · already in place · to take effect",
+        "needs you, when something is blocked",
+        "--dry-run prints the exact commands and writes nothing"
+      ]
+    }
+  ]
+}

@@ -11,8 +11,9 @@ skillgram only adds links and never copies, adopts, moves or deletes anything.
     ~/.<agent>/skills/<skill>                    -> junction to the hub
     ~/.<agent>/skills/<tipo>                     -> junction to the category
 
-No skills are bundled. Bring your own hub (or start empty) and skillgram keeps
-every agent, IDE and harness on the same library.
+No work skills are bundled. Bring your own hub (or start empty) and skillgram
+keeps every agent, IDE and harness on the same library. The only skill in this
+repo is skills/skillgram-report: it tells an agent how to report a bug or a gap.
 
 Project scope (engram-style)
 ----------------------------
@@ -76,7 +77,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "1.1.3"
+VERSION = "1.2.0"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto

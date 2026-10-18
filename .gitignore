@@ -9,3 +9,10 @@ venv/
 *.log
 .agents/skills.json
 .git-commit-msg*
+
+# archify receipts and captures: regenerable evidence, not source
+docs/diagrams/*.delivery.json
+docs/diagrams/*.delivery-pending.json
+docs/diagrams/*.finalize*.json
+docs/diagrams/*.browser-check.json
+docs/diagrams/*.visual-check*

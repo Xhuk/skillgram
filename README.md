@@ -452,6 +452,31 @@ The repo ships both forms — `.github/ISSUE_TEMPLATE/bug_report.yml` and
 instead of a paragraph. `config.yml` routes install failures to [INSTALL.md](INSTALL.md)
 first, because that is what most of them are.
 
+### The one skill this repo ships (1.2)
+
+`skills/skillgram-report/SKILL.md` is a real, lint-clean skill: it teaches an agent to decide
+the channel, capture the evidence (command, exit code, one JSON line, `doctor --json`, the
+harness config read back **after** the command that claimed success), redact it, and only
+then open the issue. It is the only skill here, and it exists because "a bug is not a skill"
+is a rule an agent has to be told, not a rule it follows by accident.
+
+Install it into your own hub like any other skill — the hub is the library, this repo is
+just the source:
+
+```powershell
+Copy-Item -Recurse skills\skillgram-report $HOME\.agents\skills\meta-skills\
+skillgram index
+skillgram sync
+```
+
+### The install flow, as a diagram
+
+[docs/diagrams/skillgram-install.html](docs/diagrams/skillgram-install.html) is a standalone,
+self-contained diagram of what `install` does — resolve → hub → probe → delegate → **re-read
+the config** → propagate → report — with the hard stops. Open it locally; GitHub serves the
+file, not a rendered page. The source is the JSON next to it (`docs/diagrams/skillgram-install.json`),
+authored with [archify](https://github.com/tt-a1i/archify).
+
 ## Remaining gaps
 
 1. No semantic search (FTS5 only): cross-language synonyms still miss.
