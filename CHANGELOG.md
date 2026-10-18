@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.2 — credits, and where gaps/errors go
+
+- README: **Prior art and credits** — Engram (project scope, CLI+MCP shape), Agent Skills
+  `SKILL.md`, the harness `skills/` conventions, ECC as the scale test. No code was copied;
+  the sections that learned from another tool say so. Ideas deserve the footnote.
+- Documents the two report channels that already exist: a **gap** (the hub has nothing for
+  a capability) is a *request* — `skillgram_missing` → `propose`, recorded in the demand log
+  (`~/.agents/skillgram-index.db`, `skillgram demand`); a **bug** is never a proposal — it
+  exits non-zero with one JSON line (`ok:false`, `error`), and the issue tracker is the
+  honest channel for it.
+
 ## 1.1.1 — install brief, real verification, multi-launcher harnesses
 
 - **`INSTALL.md`**: a copy-paste brief to hand to a fresh agent session (what to run, what

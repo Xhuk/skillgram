@@ -194,6 +194,30 @@ Each agent gets two kinds of links:
 python -m unittest discover -s tests -v
 ```
 
+## Prior art and credits
+
+skillgram is original code (MIT, stdlib only, no dependencies), but the *ideas* are not
+mine and pretending otherwise would be dishonest. These shaped it — if one of them is
+what you actually need, use it directly:
+
+- **Engram** — the project-scope resolution order (`--project` → env → nearest
+  `.agents/config.json` up to the git root → cwd), the "one store, a per-project view"
+  model, and the CLI-plus-MCP split this repo copied the shape of. This README says
+  "engram-style" wherever that applies.
+- **Agent Skills / `SKILL.md`** (Claude Code, then everyone else) — the `SKILL.md` +
+  YAML frontmatter format, and the `.claude/skills` convention all other harnesses
+  imitated. skillgram does not invent a format: it links yours.
+- **Codex, Cursor, Gemini CLI, Kiro, Qwen Code, Aider, OpenCode, Copilot** — their
+  project-level `skills/` layouts are the reason `mount` knows thirteen of them.
+- **ECC** — a 291-skill pack that lives next to this hub, and the reason every feature
+  here gets tested against "does this still hold at ~850 skills?".
+- **Unix**, in the only sense that matters: one directory is the truth, and every agent is
+  a client of it.
+
+No code was copied from any of them. Where a behaviour was learned from another tool, the
+section that documents it says so. If you think your project belongs in this list, open an
+issue — credit is cheap, respect is not.
+
 ## License
 
 MIT.
@@ -373,8 +397,9 @@ these remain open by decision:
    miss (measured: `"cotizar credito hipotecario"` → 1 weak hit).
 5. **No permissions/profiles.** No agent/admin split: anyone with a shell can publish
    or retire. Engram separates tool profiles.
-6. **No skill quality gate.** `propose` validates frontmatter and uniqueness, not
-   whether the skill is any good (no lint, no eval).
+6. **No taste gate.** `lint` checks shape (frontmatter, `name`, description length, body
+   size) and is a hard gate in `propose`, but nothing judges whether a skill is *useful*:
+   no eval, no grading, no dry run of the skill itself.
 7. **No scheduled review.** `review` is manual; there is no cadence, cron or
    notification when a project's set goes stale.
 8. **MCP is tools-only.** No `resources`, no `prompts`, no sampling.
@@ -407,6 +432,20 @@ skillgram git push --apply
 The hub is the asset. With git under it, "sync between machines" is git's job —
 skillgram only reports and pushes. Conflicts are resolved by git, never by
 skillgram guessing which skill version wins.
+
+### A gap is a request; a bug is not
+
+Two different things, two different channels — mixing them is how a roadmap turns into
+noise:
+
+| | What it is | Where it goes |
+|---|---|---|
+| **Gap** | the hub has nothing for a capability the agent needed | `skillgram_missing` → `found:false` → the agent tells you and offers `skillgram propose "<need>"`. The query is recorded in the demand log (`~/.agents/skillgram-index.db`, table `demand`); `skillgram demand` ranks them. The LLM drafts, `lint` gates it, you approve with `--apply`, and the manifest stamps `by: llm:<model>` (+ `~/.agents/skillgram-llm.log`). |
+| **Bug** | skillgram itself failed (bad link, wrong argv, crash) | one JSON line on stdout with `ok:false` + `error` and a non-zero exit (`1` problem, `2` bad invocation); with `--json` it is machine-readable. Nothing is hidden and nothing is "fixed" silently. The issue tracker is the honest channel: a bug is never filed as a skill. |
+
+What the agent must never do: invent a skill to paper over a gap, or describe a bug as
+"a skill we should add". The protocol block injected into each project says exactly this,
+and `mcp --read-only` removes the write tools entirely for untrusted sessions.
 
 ## Remaining gaps
 

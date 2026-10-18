@@ -1,0 +1,11 @@
+skillgram 1.1.2: credits, and the line between a gap and a bug
+
+- README: "Prior art and credits". Engram gave the project-scope resolution order and
+  the CLI+MCP shape; Agent Skills gave the SKILL.md format; the harnesses gave the
+  skills/ conventions; ECC is the scale test. No code was copied, and the sections that
+  learned from another tool say where. Ideas deserve the footnote.
+- README: "A gap is a request; a bug is not". A gap (the hub has nothing) goes to
+  skillgram_missing -> propose -> the demand log and lint gate. A bug goes to one JSON
+  line with ok:false and a non-zero exit; it is never dressed up as a skill.
+- README: the stale "no skill quality gate" gap now says what is true: lint gates shape,
+  nothing judges usefulness.
