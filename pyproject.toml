@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skillgram"
+version = "0.1.0"
+description = "One skill hub for every coding agent: link a single SKILL.md library into Claude Code, Codex, Cursor, Hermes, Reasonix and any harness that reads skills."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Xhuk" }]
+keywords = ["skills", "agents", "claude-code", "codex", "hermes", "cursor", "reasonix", "symlink", "junctions"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Tools",
+]
+
+[project.scripts]
+skillgram = "skillgram:main"
+
+[project.urls]
+Homepage = "https://github.com/Xhuk/skillgram"
+Issues = "https://github.com/Xhuk/skillgram/issues"
+
+[tool.setuptools]
+py-modules = ["skillgram"]
