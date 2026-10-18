@@ -32,3 +32,11 @@ Keep it that way unless there is a hard reason not to.
     python skillgram.py doctor --json
     python skillgram.py status --json
     python skillgram.py onboard --no-llm --json
+
+## 0.5 additions
+
+- `index` / `search` (FTS5 at `~/.agents/skillgram-index.db`), `mcp` (stdio JSON-RPC).
+- Lifecycle: `review`, `pin`, `retire` (`<hub>/_retired/` + `_retired.json` tombstones).
+- `export` / `import` (tar.gz with a `hub.json` of hashes).
+- `_`-prefixed directories in the hub are never treated as categories.
+- Known gaps are listed in README ("Known gaps"); keep that list honest.

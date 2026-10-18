@@ -355,5 +355,122 @@ class TestBootstrap(HomeCase):
         res = skillgram.propose_skill(skillgram.Hub(self.hub_root), proj, "ci pipeline", None)
         self.assertFalse(res["ok"])
         self.assertIn("LLM", res["error"])
+
+
+class TestIndex(HomeCase):
+    def test_build_and_search(self):
+        make_skill(self.hub_root, "infra-ops", "docker-deploy", "deploy docker compose to a vps")
+        make_skill(self.hub_root, "design-ui", "archify", "diagramas de arquitectura")
+        hub = skillgram.Hub(self.hub_root)
+        db = self.tmp / "idx.db"
+        built = skillgram.index_build(hub, path=db)
+        self.assertEqual(built["skills"], 2)
+        res = skillgram.index_search("docker vps", path=db)
+        self.assertEqual(res["resultados"][0]["skill"], "docker-deploy")
+        self.assertEqual(res["indexadas"], 2)
+
+    def test_search_without_match(self):
+        make_skill(self.hub_root, "infra-ops", "docker-deploy", "deploy docker")
+        hub = skillgram.Hub(self.hub_root)
+        db = self.tmp / "idx.db"
+        skillgram.index_build(hub, path=db)
+        res = skillgram.index_search("hipotecario credito", path=db)
+        self.assertEqual(res["resultados"], [])
+
+
+class TestLifecycle(HomeCase):
+    def _project(self):
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        proj = self.tmp / "proj"
+        hub = skillgram.Hub(self.hub_root)
+        skillgram.init_project("proj", str(proj))
+        skillgram.promote(hub, ["deploy"], proj)
+        return hub, proj
+
+    def test_touch_usage_and_pin(self):
+        _hub, proj = self._project()
+        skillgram.touch_usage(proj, ["deploy"])
+        skillgram.touch_usage(proj, ["deploy"])
+        manifest = json.loads((proj / ".agents" / "skills.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["skills"]["deploy"]["use_count"], 2)
+        self.assertIn("last_used", manifest["skills"]["deploy"])
+        skillgram.pin_skill(proj, ["deploy"])
+        manifest = json.loads((proj / ".agents" / "skills.json").read_text(encoding="utf-8"))
+        self.assertTrue(manifest["skills"]["deploy"]["pinned"])
+
+    def test_review_lists_never_used(self):
+        hub, proj = self._project()
+        rev = skillgram.review_list(hub, proj)
+        self.assertEqual(rev["nunca_usadas"], ["deploy"])
+        skillgram.touch_usage(proj, ["deploy"])
+        self.assertEqual(skillgram.review_list(hub, proj)["nunca_usadas"], [])
+
+    def test_retire_moves_and_tombstones(self):
+        hub, _proj = self._project()
+        res = skillgram.retire_skill(hub, "deploy", reason="test")
+        self.assertTrue(res["ok"])
+        self.assertNotIn("deploy", hub.skills())          # fuera del hub activo
+        self.assertTrue((self.hub_root / "_retired" / "deploy" / "SKILL.md").is_file())
+        log = json.loads((self.hub_root / "_retired" / "_retired.json").read_text(encoding="utf-8"))
+        self.assertEqual(log[0]["skill"], "deploy")
+        self.assertEqual(log[0]["reason"], "test")
+
+    def test_retired_dir_is_not_a_category(self):
+        make_skill(self.hub_root, "infra-ops", "x")
+        (self.hub_root / "_retired" / "y").mkdir(parents=True)
+        (self.hub_root / "_retired" / "y" / "SKILL.md").write_text("---\nname: y\n---\n", encoding="utf-8")
+        hub = skillgram.Hub(self.hub_root)
+        self.assertNotIn("_retired", hub.tipos())
+        self.assertEqual(list(hub.skills()), ["x"])
+
+
+class TestExportImport(HomeCase):
+    def test_roundtrip(self):
+        make_skill(self.hub_root, "infra-ops", "deploy", "v1")
+        hub = skillgram.Hub(self.hub_root)
+        out = self.tmp / "hub.tar.gz"
+        exp = skillgram.export_hub(hub, out)
+        self.assertEqual(exp["skills"], 1)
+        self.assertTrue(out.is_file())
+
+        other_root = self.tmp / "other"
+        other_root.mkdir()
+        other = skillgram.Hub(other_root)
+        pre = skillgram.import_hub(other, out, apply=False)
+        self.assertEqual(pre["importadas"], ["deploy"])
+        self.assertFalse((other_root / "infra-ops" / "deploy").exists())
+        done = skillgram.import_hub(other, out, apply=True)
+        self.assertEqual(done["importadas"], ["deploy"])
+        self.assertTrue((other_root / "infra-ops" / "deploy" / "SKILL.md").is_file())
+        again = skillgram.import_hub(other, out, apply=True)
+        self.assertEqual(again["ya_existian"], ["deploy"])
+
+
+class TestMcp(HomeCase):
+    def test_tools_list_and_call(self):
+        make_skill(self.hub_root, "infra-ops", "deploy", "deploy docker")
+        hub = skillgram.Hub(self.hub_root)
+        self.assertEqual(len(skillgram.MCP_TOOLS), 5)
+        res = skillgram.mcp_call(hub, "skillgram_missing", {"query": "docker deploy"})
+        self.assertTrue(res["found"])
+        bad = skillgram.mcp_call(hub, "nope", {})
+        self.assertFalse(bad["ok"])
+
+    def test_stdio_session(self):
+        import io
+
+        make_skill(self.hub_root, "infra-ops", "deploy", "deploy docker")
+        hub = skillgram.Hub(self.hub_root)
+        stdin = io.StringIO(
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n'
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n'
+            '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"skillgram_status","arguments":{}}}\n'
+        )
+        stdout = io.StringIO()
+        skillgram.mcp_serve(hub, stdin=stdin, stdout=stdout)
+        lines = [json.loads(line) for line in stdout.getvalue().strip().splitlines()]
+        self.assertEqual(lines[0]["result"]["serverInfo"]["name"], "skillgram")
+        self.assertEqual(len(lines[1]["result"]["tools"]), 5)
+        self.assertIn("content", lines[2]["result"])
 if __name__ == "__main__":
     unittest.main()

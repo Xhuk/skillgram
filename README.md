@@ -314,3 +314,55 @@ skillgram missing "quote a mortgage"
 When `found` is `false`, skillgram stops there: **the agent** (Hermes, Claude,
 Codex, Reasonix, ...) is the one that proposes something to the user. skillgram
 only administers.
+## Search, lifecycle, portability and MCP (0.5)
+
+```bash
+skillgram index                          # FTS5 index over the hub (~/.agents/skillgram-index.db)
+skillgram search "docker deploy vps" --limit 5
+skillgram mcp                            # MCP server (stdio) for the agent
+```
+
+MCP tools exposed: `skillgram_search`, `skillgram_missing`, `skillgram_use`,
+`skillgram_status`, `skillgram_propose`. With this, an agent asks the hub **as a
+tool call** instead of shelling out: `missing` returning `{"found": false}` is the
+contract that says "do not invent, tell the user".
+
+Lifecycle (answers "is this skill still alive?"):
+
+```bash
+skillgram review --days 90        # never used / not used recently
+skillgram pin <skill>...          # pinned skills never show up as stale
+skillgram retire <skill>          # moves it to <hub>/_retired/ + tombstone, never deletes
+```
+
+`use` now stamps `last_used`, `use_count` and `last_used_by` in the project manifest.
+`_retired/` keeps the content plus `_retired.json` (who/when/why/hash), and `_retired`
+is never treated as a category.
+
+Portability:
+
+```bash
+skillgram export hub.tar.gz       # tar.gz with every skill + hub.json of hashes
+skillgram import hub.tar.gz       # verifies hashes; --apply to materialize
+```
+
+## Known gaps (documented, not implemented)
+
+Compared with Engram (Gentleman-Programming), which is a service with full lifecycle,
+these remain open by decision:
+
+1. **No cross-machine sync.** `export`/`import` is manual: there is no transport
+   (git/cloud) and no conflict resolution between two hubs.
+2. **No merge of divergent skills.** Same name + different content fails instead of
+   merging; a merge has to be proposed by hand (or by the LLM) and applied.
+3. **No real usage telemetry.** `use_count` counts explicit promotions and MCP `use`
+   calls; skillgram does not observe which skills an agent actually reads.
+4. **Lexical search only.** FTS5 has no embeddings, so synonyms across languages still
+   miss (measured: `"cotizar credito hipotecario"` → 1 weak hit).
+5. **No permissions/profiles.** No agent/admin split: anyone with a shell can publish
+   or retire. Engram separates tool profiles.
+6. **No skill quality gate.** `propose` validates frontmatter and uniqueness, not
+   whether the skill is any good (no lint, no eval).
+7. **No scheduled review.** `review` is manual; there is no cadence, cron or
+   notification when a project's set goes stale.
+8. **MCP is tools-only.** No `resources`, no `prompts`, no sampling.

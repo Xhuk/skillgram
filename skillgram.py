@@ -71,7 +71,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto
@@ -114,7 +114,7 @@ class Hub:
         for tipo_dir in sorted(self.root.iterdir()):
             if not tipo_dir.is_dir() or tipo_dir.is_symlink() or self._is_junction(tipo_dir):
                 continue
-            if tipo_dir.name.startswith(".") or tipo_dir.name in self.exclude_agents:
+            if tipo_dir.name.startswith(".") or tipo_dir.name.startswith("_") or tipo_dir.name in self.exclude_agents:
                 continue
             for skill_dir in sorted(tipo_dir.iterdir()):
                 if not skill_dir.is_dir():
@@ -128,7 +128,7 @@ class Hub:
             return []
         out = []
         for d in sorted(self.root.iterdir()):
-            if d.is_dir() and not self._is_junction(d) and not d.name.startswith("."):
+            if d.is_dir() and not self._is_junction(d) and not d.name.startswith(".") and not d.name.startswith("_"):
                 # un tipo es una carpeta cuyas hijas son skills
                 if any((c / "SKILL.md").is_file() for c in d.iterdir() if c.is_dir()):
                     out.append(d.name)
@@ -1885,6 +1885,319 @@ def propose_skill(hub: Hub, project: Path, need: str, cfg: dict | None, apply: b
     return result
 
 # ---------------------------------------------------------------------------
+# Indice FTS5: buscar en el hub de verdad (no substring)
+# ---------------------------------------------------------------------------
+
+INDEX_PATH = HOME / ".agents" / "skillgram-index.db"
+
+
+def _index_conn(path: Path | None = None):
+    import sqlite3
+
+    p = Path(path or INDEX_PATH)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(p))
+    conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS skills USING fts5("
+                 "name, tipo, description, body, tokenize='unicode61')")
+    conn.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")
+    return conn
+
+
+def index_build(hub: Hub, path: Path | None = None) -> dict:
+    """(Re)construye el indice FTS5 del hub. Idempotente."""
+    conn = _index_conn(path)
+    try:
+        conn.execute("DELETE FROM skills")
+        rows = 0
+        for name, tipo in sorted(hub.skills().items()):
+            d = hub.root / tipo / name
+            try:
+                text = (d / "SKILL.md").read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            desc = ""
+            for line in text.splitlines()[:20]:
+                if line.strip().lower().startswith("description:"):
+                    desc = line.split(":", 1)[1].strip()
+                    break
+            conn.execute("INSERT INTO skills (name, tipo, description, body) VALUES (?,?,?,?)",
+                         (name, tipo, desc, text[:20000]))
+            rows += 1
+        conn.execute("INSERT OR REPLACE INTO meta (k, v) VALUES ('built_at', ?)",
+                     (time.strftime("%Y-%m-%dT%H:%M:%S"),))
+        conn.execute("INSERT OR REPLACE INTO meta (k, v) VALUES ('skills', ?)", (str(rows),))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "op": "index", "skills": rows, "path": str(path or INDEX_PATH)}
+
+
+def index_search(text: str, limit: int = 10, path: Path | None = None) -> dict:
+    """Busqueda FTS5 con fallback a tokens si el indice no existe."""
+    conn = _index_conn(path)
+    try:
+        q = " OR ".join(f'"{t}"' for t in re_findall_words(text) if len(t) > 2) or '""'
+        try:
+            cur = conn.execute(
+                "SELECT name, tipo, description, bm25(skills) AS rank FROM skills "
+                "WHERE skills MATCH ? ORDER BY rank LIMIT ?", (q, limit))
+            rows = [{"skill": r[0], "tipo": r[1], "description": r[2][:160], "rank": round(r[3], 3)}
+                    for r in cur.fetchall()]
+        except Exception:
+            rows = []
+        total = conn.execute("SELECT v FROM meta WHERE k='skills'").fetchone()
+        built = conn.execute("SELECT v FROM meta WHERE k='built_at'").fetchone()
+    finally:
+        conn.close()
+    return {"ok": True, "op": "search", "query": text, "resultados": rows,
+            "indexadas": int(total[0]) if total else 0, "built_at": built[0] if built else None}
+
+
+# ---------------------------------------------------------------------------
+# Ciclo de vida: uso, revision, pin y retiro con tombstone
+# ---------------------------------------------------------------------------
+
+RETIRED_DIR = "_retired"
+RETIRED_LOG = "_retired.json"
+
+
+def touch_usage(project: Path, names: list, by: str = "agent") -> dict:
+    """Marca uso en el manifest del proyecto (last_used / use_count)."""
+    manifest = _read_manifest(project)
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+    touched = []
+    for name in names:
+        entry = manifest["skills"].get(name)
+        if not entry:
+            continue
+        entry["last_used"] = stamp
+        entry["use_count"] = int(entry.get("use_count", 0)) + 1
+        entry["last_used_by"] = by
+        touched.append(name)
+    _write_manifest(project, manifest)
+    return {"ok": True, "op": "use", "touched": touched}
+
+
+def pin_skill(project: Path, names: list, pinned: bool = True) -> dict:
+    manifest = _read_manifest(project)
+    done = []
+    for name in names:
+        entry = manifest["skills"].get(name)
+        if entry:
+            entry["pinned"] = pinned
+            done.append(name)
+    _write_manifest(project, manifest)
+    return {"ok": True, "op": "pin", "pinned": pinned, "skills": done}
+
+
+def review_list(hub: Hub, project: Path | None = None, days: int = 90) -> dict:
+    """Skills promovidas hace mucho y sin uso reciente (o nunca usadas)."""
+    manifest = _read_manifest(project) if project else {"skills": {}}
+    now = time.time()
+    stale, never, pinned = [], [], []
+    for name, entry in sorted(manifest["skills"].items()):
+        if entry.get("pinned"):
+            pinned.append(name)
+            continue
+        last = entry.get("last_used") or entry.get("promoted_at")
+        if not entry.get("use_count"):
+            never.append(name)
+            continue
+        try:
+            ts = time.mktime(time.strptime(last, "%Y-%m-%dT%H:%M:%S"))
+        except (TypeError, ValueError):
+            continue
+        if (now - ts) / 86400 >= days:
+            stale.append({"skill": name, "dias": int((now - ts) / 86400), "use_count": entry.get("use_count")})
+    return {"ok": True, "op": "review", "project": str(project) if project else None,
+            "umbral_dias": days, "nunca_usadas": never, "sin_uso_reciente": stale, "pinned": pinned}
+
+
+def retire_skill(hub: Hub, name: str, reason: str = "") -> dict:
+    """Retira una skill del hub a _retired/ y deja tombstone (nunca borra)."""
+    tipo = hub.skills().get(name)
+    if not tipo:
+        return {"ok": False, "op": "retire", "skill": name, "error": "no existe en el hub"}
+    src = hub.root / tipo / name
+    dest = hub.root / RETIRED_DIR / name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if dest.exists():
+            shutil.rmtree(dest, ignore_errors=True)
+        shutil.move(str(src), str(dest))
+    except OSError as exc:
+        return {"ok": False, "op": "retire", "skill": name, "error": str(exc)}
+    log_path = hub.root / RETIRED_DIR / RETIRED_LOG
+    try:
+        data = json.loads(log_path.read_text(encoding="utf-8")) if log_path.is_file() else []
+    except (OSError, ValueError):
+        data = []
+    if not isinstance(data, list):
+        data = []
+    data.append({"skill": name, "tipo": tipo, "retired_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                 "reason": reason[:200], "hash": skill_hash(dest)})
+    log_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return {"ok": True, "op": "retire", "skill": name, "tipo": tipo, "to": str(dest)}
+
+
+# ---------------------------------------------------------------------------
+# Export / import del hub (portable, con hashes)
+# ---------------------------------------------------------------------------
+
+def export_hub(hub: Hub, out: Path) -> dict:
+    import tarfile
+
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    manifest = {"exported_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "hub": str(hub.root), "skills": []}
+    with tarfile.open(out, "w:gz") as tar:
+        for name, tipo in sorted(hub.skills().items()):
+            d = hub.root / tipo / name
+            manifest["skills"].append({"name": name, "tipo": tipo, "hash": skill_hash(d)})
+            tar.add(str(d), arcname=f"{tipo}/{name}")
+        tmp = out.with_suffix(".json")
+        tmp.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        tar.add(str(tmp), arcname="hub.json")
+        tmp.unlink(missing_ok=True)
+    return {"ok": True, "op": "export", "file": str(out), "skills": len(manifest["skills"]),
+            "bytes": out.stat().st_size}
+
+
+def import_hub(hub: Hub, src: Path, apply: bool = False) -> dict:
+    import tarfile
+    import tempfile
+
+    src = Path(src)
+    if not src.is_file():
+        return {"ok": False, "op": "import", "error": f"no existe {src}"}
+    added, skipped, failed = [], [], []
+    with tempfile.TemporaryDirectory() as tmp:
+        with tarfile.open(src, "r:gz") as tar:
+            tar.extractall(tmp)
+        meta_path = Path(tmp) / "hub.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {"skills": []}
+        for item in meta.get("skills", []):
+            name, tipo = item.get("name"), item.get("tipo")
+            src_dir = Path(tmp) / tipo / name
+            if not src_dir.is_dir():
+                failed.append(f"{name}: falta en el archivo")
+                continue
+            if skill_hash(src_dir) != item.get("hash"):
+                failed.append(f"{name}: hash distinto")
+                continue
+            dest = hub.root / tipo / name
+            if dest.exists():
+                skipped.append(name)
+                continue
+            if apply:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(src_dir, dest)
+                added.append(name)
+            else:
+                added.append(name)
+    return {"ok": not failed, "op": "import", "file": str(src), "aplicado": apply,
+            "importadas": added, "ya_existian": skipped, "fallidas": failed}
+
+
+# ---------------------------------------------------------------------------
+# MCP: skillgram como tool del agente (stdio, JSON-RPC 2.0 por linea)
+# ---------------------------------------------------------------------------
+
+MCP_TOOLS = [
+    {"name": "skillgram_search",
+     "description": "Full-text search over the skill hub (FTS5). Use it before proposing a new skill.",
+     "inputSchema": {"type": "object", "properties": {"query": {"type": "string"},
+                                                     "limit": {"type": "integer", "default": 10}},
+                     "required": ["query"]}},
+    {"name": "skillgram_missing",
+     "description": "Ask whether the hub covers a capability. found=false means: do not invent, tell the user.",
+     "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
+    {"name": "skillgram_use",
+     "description": "Promote hub skills into the current project scope (idempotent).",
+     "inputSchema": {"type": "object", "properties": {"skills": {"type": "array", "items": {"type": "string"}},
+                                                     "project": {"type": "string"}},
+                     "required": ["skills"]}},
+    {"name": "skillgram_status",
+     "description": "Hub health and the project scope summary.",
+     "inputSchema": {"type": "object", "properties": {"project": {"type": "string"}}}},
+    {"name": "skillgram_propose",
+     "description": "Draft (and with apply=true publish) a new skill with the connected LLM. Requires approval.",
+     "inputSchema": {"type": "object", "properties": {"need": {"type": "string"},
+                                                     "apply": {"type": "boolean", "default": False},
+                                                     "project": {"type": "string"}},
+                     "required": ["need"]}},
+]
+
+
+def mcp_call(hub: Hub, name: str, args: dict) -> dict:
+    """Despacho de una tool MCP. Devuelve el resultado como dict."""
+    if name == "skillgram_search":
+        return index_search(str(args.get("query", "")), int(args.get("limit", 10) or 10))
+    if name == "skillgram_missing":
+        return missing(hub, str(args.get("query", "")))
+    if name == "skillgram_use":
+        proj = resolve_project(args.get("project"))
+        return promote(hub, [str(s) for s in args.get("skills", [])], Path(proj["path"]))
+    if name == "skillgram_status":
+        proj = resolve_project(args.get("project"))
+        return {"hub": status(hub), "project": project_status(hub, Path(proj["path"]))}
+    if name == "skillgram_propose":
+        proj = resolve_project(args.get("project"))
+        return propose_skill(hub, Path(proj["path"]), str(args.get("need", "")),
+                             llm_config(), apply=bool(args.get("apply")))
+    return {"ok": False, "error": f"tool desconocida: {name}"}
+
+
+def mcp_serve(hub: Hub, stdin=None, stdout=None) -> int:
+    """Server MCP minimo: initialize, tools/list, tools/call, ping."""
+    import sys as _sys
+
+    fin = stdin or _sys.stdin
+    fout = stdout or _sys.stdout
+
+    def reply(payload):
+        fout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        fout.flush()
+
+    for line in fin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        method = msg.get("method")
+        mid = msg.get("id")
+        if method == "initialize":
+            reply({"jsonrpc": "2.0", "id": mid, "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "skillgram", "version": VERSION},
+            }})
+        elif method in ("notifications/initialized", "initialized"):
+            continue
+        elif method == "ping":
+            reply({"jsonrpc": "2.0", "id": mid, "result": {}})
+        elif method == "tools/list":
+            reply({"jsonrpc": "2.0", "id": mid, "result": {"tools": MCP_TOOLS}})
+        elif method == "tools/call":
+            params = msg.get("params") or {}
+            name = params.get("name")
+            args = params.get("arguments") or {}
+            try:
+                out = mcp_call(hub, name, args)
+            except Exception as exc:  # noqa: BLE001 - el server no debe morir
+                out = {"ok": False, "error": str(exc)}
+            reply({"jsonrpc": "2.0", "id": mid, "result": {
+                "content": [{"type": "text", "text": json.dumps(out, ensure_ascii=False)}],
+                "isError": not out.get("ok", False),
+            }})
+        elif mid is not None:
+            reply({"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": f"metodo no soportado: {method}"}})
+    return 0
+
+# ---------------------------------------------------------------------------
 # Log y estado
 # ---------------------------------------------------------------------------
 
@@ -2153,6 +2466,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_prop.add_argument("--project")
     p_prop.add_argument("--apply", action="store_true", help="publica en el hub, registra y monta")
     p_prop.add_argument("--no-llm", action="store_true")
+    sub.add_parser("index", parents=[common], help="(re)construye el indice FTS5 del hub")
+    p_srch = sub.add_parser("search", parents=[common], help="busqueda full-text en el hub")
+    p_srch.add_argument("text", nargs="+")
+    p_srch.add_argument("--limit", type=int, default=10)
+    p_rev = sub.add_parser("review", parents=[common], help="skills nunca usadas o sin uso reciente")
+    p_rev.add_argument("--project")
+    p_rev.add_argument("--days", type=int, default=90)
+    p_pin = sub.add_parser("pin", parents=[common], help="marca skills del proyecto como fijas (no caducan)")
+    p_pin.add_argument("skills", nargs="+")
+    p_pin.add_argument("--project")
+    p_pin.add_argument("--unpin", action="store_true")
+    p_ret = sub.add_parser("retire", parents=[common], help="retira una skill del hub a _retired (nunca borra)")
+    p_ret.add_argument("skill")
+    p_ret.add_argument("--reason", default="")
+    p_exp = sub.add_parser("export", parents=[common], help="exporta el hub a un tar.gz con hashes")
+    p_exp.add_argument("file")
+    p_imp = sub.add_parser("import", parents=[common], help="importa un tar.gz exportado por skillgram")
+    p_imp.add_argument("file")
+    p_imp.add_argument("--apply", action="store_true")
+    sub.add_parser("mcp", parents=[common], help="server MCP (stdio) para que el agente consulte el hub")
     sub.add_parser("doctor", parents=[common], help="inventario: harnesss, nativas, colisiones, drift")
     p_status = sub.add_parser("status", parents=[common], help="drift actual sin tocar nada")
     p_status.add_argument("--verify", action="store_true", help="ademas verifica a donde apunta cada enlace (lento)")
@@ -2204,6 +2537,26 @@ def main(argv: list[str] | None = None) -> int:
             result = port_missing(hub, targets, cfg, apply=args.apply)
     elif args.cmd == "precedence":
         result = apply_precedence(hub, apply=args.apply)
+    elif args.cmd == "index":
+        result = index_build(hub)
+    elif args.cmd == "search":
+        result = index_search(" ".join(args.text), limit=args.limit)
+    elif args.cmd == "review":
+        proj = resolve_project(args.project)
+        result = review_list(hub, Path(proj["path"]), days=args.days)
+    elif args.cmd == "pin":
+        proj = resolve_project(args.project)
+        result = pin_skill(Path(proj["path"]), args.skills, pinned=not args.unpin)
+    elif args.cmd == "retire":
+        result = retire_skill(hub, args.skill, reason=args.reason)
+        if result.get("ok"):
+            result["sync"] = sync(hub, quiet=True)
+    elif args.cmd == "export":
+        result = export_hub(hub, Path(args.file))
+    elif args.cmd == "import":
+        result = import_hub(hub, Path(args.file), apply=args.apply)
+    elif args.cmd == "mcp":
+        return mcp_serve(hub)
     elif args.cmd == "bootstrap":
         proj = resolve_project(args.project)
         cfg = None if args.no_llm else llm_config()
@@ -2297,6 +2650,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "use":
         proj = resolve_project(args.project)
         result = promote(hub, args.skills, Path(proj["path"]))
+        result["uso"] = touch_usage(Path(proj["path"]), args.skills).get("touched", [])
         result["resolucion"] = proj["source"]
     elif args.cmd == "unuse":
         proj = resolve_project(args.project)
@@ -2352,6 +2706,26 @@ def main(argv: list[str] | None = None) -> int:
             result = port_missing(hub, targets, cfg, apply=args.apply)
     elif args.cmd == "precedence":
         result = apply_precedence(hub, apply=args.apply)
+    elif args.cmd == "index":
+        result = index_build(hub)
+    elif args.cmd == "search":
+        result = index_search(" ".join(args.text), limit=args.limit)
+    elif args.cmd == "review":
+        proj = resolve_project(args.project)
+        result = review_list(hub, Path(proj["path"]), days=args.days)
+    elif args.cmd == "pin":
+        proj = resolve_project(args.project)
+        result = pin_skill(Path(proj["path"]), args.skills, pinned=not args.unpin)
+    elif args.cmd == "retire":
+        result = retire_skill(hub, args.skill, reason=args.reason)
+        if result.get("ok"):
+            result["sync"] = sync(hub, quiet=True)
+    elif args.cmd == "export":
+        result = export_hub(hub, Path(args.file))
+    elif args.cmd == "import":
+        result = import_hub(hub, Path(args.file), apply=args.apply)
+    elif args.cmd == "mcp":
+        return mcp_serve(hub)
     elif args.cmd == "bootstrap":
         proj = resolve_project(args.project)
         cfg = None if args.no_llm else llm_config()
