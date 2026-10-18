@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/logo.png" alt="skillgram" width="120"></p>
+<p align="center"><img src="docs/logo.png" alt="skillgram" width="120"></p>
 
 <p align="center">
   <a href="https://github.com/Xhuk/skillgram/actions/workflows/ci.yml"><img src="https://github.com/Xhuk/skillgram/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
