@@ -1388,7 +1388,9 @@ def _same_path(entry: str, hub_path: str) -> bool:
     """
     def norm(value: str) -> str:
         value = value.strip().strip('"').strip("'").rstrip("/\\")
-        return os.path.normcase(str(Path(value.replace("/", os.sep))))
+        # a backslash is a separator on Windows only, so unify both spellings
+        unified = value.replace("\\", os.sep).replace("/", os.sep)
+        return os.path.normcase(str(Path(unified)))
 
     return norm(entry) == norm(hub_path)
 
