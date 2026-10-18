@@ -71,7 +71,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "0.6.1"
+VERSION = "0.7.0"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto
@@ -1870,6 +1870,12 @@ def propose_skill(hub: Hub, project: Path, need: str, cfg: dict | None, apply: b
     dest = hub.root / tipo / name
     dest.mkdir(parents=True, exist_ok=True)
     (dest / "SKILL.md").write_text(draft if draft.endswith("\n") else draft + "\n", encoding="utf-8")
+    gate = lint_skill(dest)
+    desc_long = any("description is" in w for w in gate["warnings"])
+    if gate["errors"] or desc_long:
+        shutil.rmtree(dest, ignore_errors=True)
+        return {"ok": False, "op": "propose", "skill": name, "error": "draft failed lint: " + "; ".join(gate["errors"]),
+                "lint": gate}
     write_skill_meta(dest, {"flavor": GENERIC_FLAVOR, "by": f"llm:{cfg['model']}",
                             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
     res = promote(hub, [name], project)
@@ -2198,6 +2204,147 @@ def mcp_serve(hub: Hub, stdin=None, stdout=None) -> int:
     return 0
 
 # ---------------------------------------------------------------------------
+# Lint: gate de calidad deterministico (corre antes de publicar)
+# ---------------------------------------------------------------------------
+
+MAX_DESCRIPTION = 140
+MAX_BODY_LINES = 400
+MIN_BODY_LINES = 6
+
+
+def _frontmatter(text: str) -> dict:
+    """Parseo minimo del frontmatter YAML (clave: valor de una linea)."""
+    out = {}
+    if not text.startswith("---"):
+        return out
+    for line in text.splitlines()[1:]:
+        if line.strip() == "---":
+            break
+        if ":" in line and not line.startswith((" ", "\t")):
+            key, _, val = line.partition(":")
+            out[key.strip().lower()] = val.strip().strip('"').strip("'")
+    return out
+
+
+def lint_skill(skill_dir: Path) -> dict:
+    """Errores duros y avisos de una skill."""
+    errors, warnings = [], []
+    path = skill_dir / "SKILL.md"
+    if not path.is_file():
+        return {"skill": skill_dir.name, "errors": ["missing SKILL.md"], "warnings": []}
+    text = path.read_text(encoding="utf-8", errors="replace")
+    fm = _frontmatter(text)
+    if not fm:
+        errors.append("missing frontmatter")
+    name = fm.get("name", "")
+    if not name:
+        errors.append("frontmatter has no `name`")
+    else:
+        if name != skill_dir.name:
+            warnings.append(f"name `{name}` != folder `{skill_dir.name}`")
+        if name != name.lower() or " " in name or "_" in name:
+            errors.append("name must be kebab-case")
+    desc = fm.get("description", "")
+    if not desc:
+        errors.append("frontmatter has no `description`")
+    elif len(desc) > MAX_DESCRIPTION:
+        warnings.append(f"description is {len(desc)} chars (max {MAX_DESCRIPTION})")
+    body_lines = [ln for ln in text.splitlines() if ln.strip()]
+    if len(body_lines) < MIN_BODY_LINES:
+        errors.append(f"body has {len(body_lines)} non-empty lines (min {MIN_BODY_LINES})")
+    elif len(body_lines) > MAX_BODY_LINES:
+        warnings.append(f"body has {len(body_lines)} non-empty lines (max {MAX_BODY_LINES})")
+    for ref in ("references/", "scripts/", "assets/"):
+        if ref in text:
+            d = skill_dir / ref.strip("/")
+            if not d.is_dir():
+                warnings.append(f"mentions {ref} but the folder does not exist")
+    return {"skill": skill_dir.name, "errors": errors, "warnings": warnings}
+
+
+def lint_hub(hub: Hub, only: str | None = None, strict: bool = False) -> dict:
+    """Lint de una skill o de todo el hub."""
+    names = [only] if only else sorted(hub.skills())
+    known = hub.skills()
+    rows = []
+    for name in names:
+        tipo = known.get(name)
+        if not tipo:
+            rows.append({"skill": name, "errors": ["not found in the hub"], "warnings": []})
+            continue
+        rows.append(lint_skill(hub.root / tipo / name))
+    with_errors = [r for r in rows if r["errors"]]
+    with_warnings = [r for r in rows if r["warnings"]]
+    failing = bool(with_errors) or (strict and bool(with_warnings))
+    return {
+        "ok": not failing,
+        "op": "lint",
+        "strict": strict,
+        "skills": len(rows),
+        "errors": with_errors,
+        "warnings": with_warnings,
+        "detail": rows if only else [],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Protocolo: que el agente sepa que el hub existe (se inyecta al montar)
+# ---------------------------------------------------------------------------
+
+PROTOCOL_BEGIN = "<!-- skillgram:protocol:begin -->"
+PROTOCOL_END = "<!-- skillgram:protocol:end -->"
+
+
+def protocol_block(hub: Hub) -> str:
+    return "\n".join([
+        PROTOCOL_BEGIN,
+        "## Skills: ask the hub first (skillgram)",
+        "",
+        f"The project's skills live in `{hub.root}` and are mounted here by skillgram.",
+        "",
+        "1. Before proposing or writing a skill, ask: `skillgram missing \"<capability>\"`",
+        "   (or the MCP tool `skillgram_missing`).",
+        "2. `found: true` -> use the skill. Read `<hub>/<category>/<skill>/SKILL.md` or invoke it by name.",
+        "3. `found: false` -> do not invent one silently. Tell the user the hub has nothing for it,",
+        "   then offer `skillgram propose \"<need>\"` (draft) and wait for approval before `--apply`.",
+        "4. Never hand-write files under `.agents/skills/`: use `skillgram use <skill>...`.",
+        "5. Adding a skill to this project is `skillgram use`, not a copy.",
+        "",
+        PROTOCOL_END,
+    ])
+
+
+def inject_protocol(hub: Hub, project: Path, files: list | None = None, apply: bool = False) -> dict:
+    """Escribe/actualiza el bloque de protocolo en los ficheros de instrucciones del proyecto."""
+    targets = files or [p for p in (project / "AGENTS.md", project / "CLAUDE.md") if p.is_file()]
+    if not targets:
+        targets = [project / "AGENTS.md"]
+    block = protocol_block(hub)
+    results = []
+    for path in targets:
+        path = Path(path)
+        try:
+            text = path.read_text(encoding="utf-8") if path.is_file() else ""
+        except OSError as exc:
+            results.append({"file": str(path), "error": str(exc)})
+            continue
+        if PROTOCOL_BEGIN in text and PROTOCOL_END in text:
+            start = text.index(PROTOCOL_BEGIN)
+            end = text.index(PROTOCOL_END) + len(PROTOCOL_END)
+            new = text[:start] + block + text[end:]
+            state = "updated"
+        else:
+            sep = "" if not text else ("\n\n" if not text.endswith("\n") else "\n")
+            new = text + sep + block + "\n"
+            state = "added"
+        changed = new != text
+        if apply and changed:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(new, encoding="utf-8")
+        results.append({"file": str(path), "state": state, "changed": changed, "applied": apply and changed})
+    return {"ok": True, "op": "protocol", "aplicado": apply, "files": results}
+
+# ---------------------------------------------------------------------------
 # Log y estado
 # ---------------------------------------------------------------------------
 
@@ -2454,6 +2601,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_mount.add_argument("--project", help="carpeta del proyecto (default: resolucion tipo engram)")
     p_mount.add_argument("--apply", action="store_true", help="crea/retira los links (si falta: solo el plan)")
     p_mount.add_argument("--prune-global", action="store_true", help="ademas retira los links al hub de los homes (strict)")
+    p_mount.add_argument("--no-protocol", action="store_true", help="do not inject the skillgram protocol into AGENTS.md/CLAUDE.md")
     p_boot = sub.add_parser("bootstrap", parents=[common], help="repo without scope: signals + LLM picks the initial set (and reports gaps)")
     p_boot.add_argument("--project")
     p_boot.add_argument("--apply", action="store_true", help="registra el set elegido en el proyecto")
@@ -2485,6 +2633,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_imp = sub.add_parser("import", parents=[common], help="importa un tar.gz exportado por skillgram")
     p_imp.add_argument("file")
     p_imp.add_argument("--apply", action="store_true")
+    p_lint = sub.add_parser("lint", parents=[common], help="quality gate: frontmatter, name, description, body size")
+    p_lint.add_argument("skill", nargs="?", help="one skill (default: the whole hub)")
+    p_lint.add_argument("--strict", action="store_true", help="warnings also fail")
     sub.add_parser("mcp", parents=[common], help="server MCP (stdio) para que el agente consulte el hub")
     sub.add_parser("doctor", parents=[common], help="inventario: harnesss, native, collisions, drift")
     p_status = sub.add_parser("status", parents=[common], help="drift actual sin tocar nada")
@@ -2537,6 +2688,8 @@ def main(argv: list[str] | None = None) -> int:
             result = port_missing(hub, targets, cfg, apply=args.apply)
     elif args.cmd == "precedence":
         result = apply_precedence(hub, apply=args.apply)
+    elif args.cmd == "lint":
+        result = lint_hub(hub, only=args.skill, strict=args.strict)
     elif args.cmd == "index":
         result = index_build(hub)
     elif args.cmd == "search":
@@ -2574,6 +2727,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "mount":
         proj = resolve_project(args.project)
         result = mount_project(hub, Path(proj["path"]), apply=args.apply, prune_global=args.prune_global)
+        if args.apply and not getattr(args, "no_protocol", False):
+            result["protocol"] = inject_protocol(hub, Path(proj["path"]), apply=True)
+        result["resolucion"] = proj["source"]
         result["resolucion"] = proj["source"]
     elif args.cmd == "adopt":
         if args.all:
@@ -2706,6 +2862,8 @@ def main(argv: list[str] | None = None) -> int:
             result = port_missing(hub, targets, cfg, apply=args.apply)
     elif args.cmd == "precedence":
         result = apply_precedence(hub, apply=args.apply)
+    elif args.cmd == "lint":
+        result = lint_hub(hub, only=args.skill, strict=args.strict)
     elif args.cmd == "index":
         result = index_build(hub)
     elif args.cmd == "search":
@@ -2743,6 +2901,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "mount":
         proj = resolve_project(args.project)
         result = mount_project(hub, Path(proj["path"]), apply=args.apply, prune_global=args.prune_global)
+        if args.apply and not getattr(args, "no_protocol", False):
+            result["protocol"] = inject_protocol(hub, Path(proj["path"]), apply=True)
+        result["resolucion"] = proj["source"]
         result["resolucion"] = proj["source"]
     elif args.cmd == "adopt":
         if args.all:
