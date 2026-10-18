@@ -2,6 +2,7 @@
 
 <p align="center">
   <a href="https://github.com/Xhuk/skillgram/actions/workflows/ci.yml"><img src="https://github.com/Xhuk/skillgram/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://pypi.org/project/skillgram/"><img src="https://img.shields.io/pypi/v/skillgram?color=b5523a" alt="PyPI"></a>
   <a href="https://github.com/Xhuk/skillgram/releases/latest"><img src="https://img.shields.io/github/v/release/Xhuk/skillgram?color=b5523a" alt="Release"></a>
   <a href="https://xhuk.github.io/skillgram/"><img src="https://img.shields.io/badge/site-xhuk.github.io%2Fskillgram-b5523a" alt="Site"></a>
   <img src="https://img.shields.io/badge/python-3.9%2B-3776ab" alt="Python 3.9+">
@@ -56,17 +57,21 @@ python skillgram.py install --dry-run   # what it would do, nothing written
 python skillgram.py install             # harness -> hub -> MCP (delegated) -> propagate
 ```
 
-From source — this is not on PyPI yet, so `pip install skillgram` would fail:
+```bash
+pip install skillgram                  # the command, no clone
+```
+
+Or from source, which is what you want if you are changing it:
 
 ```bash
 git clone https://github.com/Xhuk/skillgram
 cd skillgram
 python skillgram.py --help
-# or install it as a command:  pip install .
 ```
 
 Stdlib only (Python 3.9+), no dependencies. Junctions on Windows, symlinks on macOS/Linux.
-CI runs the suite on Linux for Python 3.9, 3.11 and 3.13.
+CI runs the suite on Linux for Python 3.9, 3.11 and 3.13; `release.yml` builds and uploads the
+tagged version to [PyPI](https://pypi.org/project/skillgram/).
 
 ## Quick start
 

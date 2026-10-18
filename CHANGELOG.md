@@ -14,6 +14,13 @@
   Authored with archify; validation, delivery, strict check and the browser gate all pass.
   Its receipts and captures are gitignored: they are regenerable evidence, not source.
 - README: both linked, with how to put the skill into your own hub.
+- **Published as `skillgram` 1.2.0 on PyPI** (`pip install skillgram`), and as a site:
+  <https://xhuk.github.io/skillgram/>. `.github/workflows/release.yml` builds `sdist` + wheel
+  and uploads them on a published release (or by `workflow_dispatch`), with `--skip-existing`
+  so a re-run cannot fail. Two metadata traps it cost to learn: PyPI rejects the legacy
+  `license = { text = "MIT" }` table (PEP 639: `license = "MIT"` + `license-files`, no
+  `License ::` classifier), and an invented classifier answers a bare `400` that only
+  `twine --verbose` explains.
 
 ## 1.1.3 — issue templates (no behaviour change)
 
