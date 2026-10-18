@@ -5,12 +5,34 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "skillgram"
 version = "1.2.0"
-description = "One skill hub for every coding agent: link a single SKILL.md library into Claude Code, Codex, Cursor, Hermes, Reasonix and any harness that reads skills."
+description = "Skill management for AI agents: one SKILL.md library (a skill hub and registry) linked into Claude Code, Codex, Cursor, Hermes, Reasonix and any harness that reads skills. No copies, no drift."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Xhuk" }]
-keywords = ["skills", "agents", "claude-code", "codex", "hermes", "cursor", "reasonix", "symlink", "junctions"]
+keywords = [
+  "skill-management",
+  "agent-skills",
+  "ai-agents",
+  "skill-registry",
+  "skill-library",
+  "skill-hub",
+  "admin-skills",
+  "llm-tools",
+  "mcp",
+  "skills",
+  "agents",
+  "claude-code",
+  "claude-skills",
+  "codex",
+  "hermes",
+  "cursor",
+  "gemini-cli",
+  "reasonix",
+  "opencode",
+  "symlink",
+  "junctions",
+]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",

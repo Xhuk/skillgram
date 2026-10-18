@@ -1,45 +1,54 @@
-# skillgram
+<p align="center"><img src="assets/logo.png" alt="skillgram" width="120"></p>
 
-**One skill library, linked into every coding agent.** No copies, no drift, no
-"which folder does this harness read?".
+<h1 align="center">skillgram</h1>
 
-skillgram keeps a single directory of skills (the *hub*) and puts a junction (or
-symlink) per skill inside each agent's own `skills/` folder. Every harness —
-Claude Code, Codex, Cursor, Hermes, Reasonix, Gemini CLI, OpenCode, Kiro, Qwen
-Code, Aider, DeepSeek harnesses, and anything else that reads `SKILL.md` — sees
-the same library.
+<p align="center"><strong>Skill management for AI agents:</strong> one skill library, linked into every coding agent.<br>
+No copies, no drift, no "which folder does this harness read?".</p>
 
-**skillgram ships no work skills.** It is the plumbing, not the content — the only skill in
-this repo is [`skills/skillgram-report`](skills/skillgram-report/SKILL.md), which teaches an
-agent how to report a bug or a gap.
+skillgram is a **skill hub** — a registry of `SKILL.md` files that actually lives in one place
+on disk — plus the admin layer that keeps every agent pointing at it. Claude Code, Codex,
+Cursor, Hermes, Reasonix, Gemini CLI, OpenCode, Kiro, Qwen Code, Aider, Copilot and anything
+else that reads skills all see the same library.
 
 ```
-~/.agents/skills/<tipo>/<skill>/SKILL.md     the hub (the only real copy)
-~/.claude/skills/<skill>                     -> junction to the hub (symlink off Windows)
-~/.codex/skills/<skill>                      -> junction to the hub
-~/.cursor/skills/agent-workflows             -> junction to the category
-%APPDATA%/Reasonix/skills/<skill>            -> junction to the hub
+~/.agents/skills/<category>/<skill>/SKILL.md   the hub (the only real copy)
+~/.claude/skills/<skill>                       -> junction to the hub (symlink off Windows)
+~/.codex/skills/<skill>                        -> junction to the hub
+%APPDATA%/Reasonix/skills/<skill>              -> junction to the hub
 ```
+
+**No work skills are bundled** — it is the plumbing, not the content. The only skill in this
+repo is [`skills/skillgram-report`](skills/skillgram-report/SKILL.md), which teaches an agent
+how to report a bug or a gap.
+
+### What this is, in other words
+
+If you were looking for a way to **manage skills for AI agents** — an **admin layer** over the
+skills your coding agents load, a **skill registry / skill library / skill manager**, or a way
+to share one set of `SKILL.md` files between Claude Code, Codex, Cursor and the rest without
+copying anything — this is that tool. Per-project scope, an MCP server so the agent can ask the
+hub, links instead of copies, and no LLM in the loop unless you ask for one.
+
+It is **not** a prompt manager, a memory store, or an embeddings index. Those are different
+things and there are good tools for them (Engram, for one, is credited below).
 
 ## Why
 
-Linking by hand once is easy. Keeping 50 agents in sync is not: agents re-create
-their own copies, rename folders, and a new hub skill never shows up by itself.
-skillgram turns that into one idempotent command (and, with `watch`, into no
-command at all).
+Linking by hand once is easy; keeping fifty agents in sync is not. Agents re-create their own
+copies, rename folders, and a new hub skill never shows up by itself. skillgram turns that
+into one idempotent command — and with `watch`, into no command at all.
 
 ## Install
 
-The whole machine in one idempotent command — and a copy-paste brief you can hand to a
-fresh agent session — is in **[INSTALL.md](INSTALL.md)**:
+The whole machine in one idempotent command, plus a copy-paste brief you can hand to a fresh
+agent session: **[INSTALL.md](INSTALL.md)**.
 
 ```bash
 python skillgram.py install --dry-run   # what it would do, nothing written
 python skillgram.py install             # harness -> hub -> MCP (delegated) -> propagate
 ```
 
-From source (the only way today — this is not on PyPI yet, so `pip install skillgram`
-would fail):
+From source — this is not on PyPI yet, so `pip install skillgram` would fail:
 
 ```bash
 git clone https://github.com/Xhuk/skillgram
@@ -48,32 +57,86 @@ python skillgram.py --help
 # or install it as a command:  pip install .
 ```
 
-Stdlib only (Python 3.9+). Junctions on Windows, symlinks on macOS/Linux; the Windows
-`install-autostart` uses `schtasks`, elsewhere use your own cron/launcher.
+Stdlib only (Python 3.9+), no dependencies. Junctions on Windows, symlinks on macOS/Linux.
+CI runs the suite on Linux for Python 3.9, 3.11 and 3.13.
 
-Status of this repo: CI runs the test suite on Linux for Python 3.9, 3.11 and 3.13.
-
-## Onboarding: it finds the skills you already have
+## Quick start
 
 ```bash
-skillgram onboard              # asks: unify ALL harnesses or just the current one?
-skillgram onboard --scope all --json --plan plan.json     # review first
-skillgram onboard --scope all --apply                      # import into the hub + link everything
+skillgram doctor            # what harnesses and native skills exist here (read-only)
+skillgram sync              # make the disk match the hub: links only, idempotent
+skillgram status            # drift, right now
+skillgram install --dry-run # the whole machine: hub + MCP + project scope
 ```
 
-`onboard` inspects **every installed harness** (any `~/.<name>/skills/` plus
-`%APPDATA%/Reasonix`), lists each native skill and asks what to do with them:
+## How it works
 
-- `--scope all` → consolidate the skills of every harness you have.
-- `--scope current --harness <name>` → only that one.
-- No flag and a real terminal → it asks.
+### Links, never copies
 
-### The connected LLM does the dirty work
+`sync` only adds links. It never copies, moves, adopts or deletes a skill an agent already
+has: a native skill with the same name as a hub skill is skipped and reported as a collision,
+never overwritten. `doctor` tells you how many native skills each harness has before you touch
+anything.
 
-If there is an OpenAI-compatible model available, `onboard` uses it to classify
-what it found: pick the hub category per skill, group byte-different duplicates,
-and label the **flavor** (`generic`, `claude`, `codex`, `hermes`, ...) by reading
-whether the skill text hard-codes one agent's CLI.
+For harnesses that scan a single level, each agent also gets one link per category
+(`skills/<category>` → `hub/<category>`), so the hub stays browsable.
+
+`precedence` is the cooperative alternative: it declares the hub **first** in each harness'
+own config (`skills.paths` for Reasonix, `skills.external_dirs` for Hermes) with a
+`*.skillgram-bak-<timestamp>` backup next to the file. Delete skillgram and every harness keeps
+exactly what it had.
+
+The hard-mount model — one junction for the whole `skills/` directory — is deliberately *not*
+the default: a `rimraf skills` or a harness uninstall would wipe the library of every agent.
+
+### Project scope (engram-style)
+
+The hub is the library; a project is what an agent actually needs while working in it.
+
+```bash
+skillgram init my-api                 # <project>/.agents/config.json
+skillgram use archify ad3 --project . # link + manifest entry, idempotent
+skillgram mount --apply               # materialize that set where each harness looks
+skillgram project-status              # healthy / stale / broken / missing links
+```
+
+```
+<project>/.agents/config.json   {"project_name": "my-api"}
+<project>/.agents/skills/<name> link to the hub
+<project>/.agents/skills.json   manifest: category, source, hash, promoted_at, last_used
+```
+
+Resolution order, same as engram: `--project` → `SKILLGRAM_PROJECT` → nearest
+`.agents/config.json` up to the git root → cwd. If it cannot resolve, it says so; it never
+guesses. `mount` writes the project's set into every harness layout that reads project-level
+skills (`.agents/skills`, `.claude/skills`, `.codex/skills`, `.cursor/skills`,
+`.gemini/skills`, `.github/skills`, `.hermes/skills`, `.kiro`, `.qwen`, `.aider`,
+`.opencode`), and `--prune-global` goes strict: the harness homes stop seeing the hub at all
+(only links that resolve into the hub are removed; native skills stay).
+
+`project-status` also flags a skill that lives both in the hub **and** as a real copy inside
+the project.
+
+### The MCP server: let the agent ask
+
+```bash
+skillgram mcp               # stdio server, 5 tools
+skillgram mcp --read-only   # the agent can query, not use/propose
+```
+
+`skillgram_search`, `skillgram_missing`, `skillgram_use`, `skillgram_status`,
+`skillgram_propose`. `missing` answering `{"found": false}` is the contract that says *do not
+invent a skill, tell the user*. `install` registers this server through each harness' own CLI
+and reads the config back afterwards — an exit code is not proof.
+
+### The LLM, only where it earns its place
+
+A connected OpenAI-compatible model is used in exactly three places, always proposing a JSON
+plan that skillgram validates and you approve: `bootstrap` (choose a project's initial set from
+the repo's signals), `propose` (draft a skill that does not exist) and `port` (translate a skill
+wired to another agent into `agents/<harness>.md`). Every decision is stamped `by: llm:<model>`
+in the manifest and logged to `~/.agents/skillgram-llm.log`. `--no-llm` and `SKILLGRAM_LLM=off`
+turn it off.
 
 ```
 SKILLGRAM_LLM_BASE_URL   default https://api.deepseek.com/v1
@@ -81,115 +144,150 @@ SKILLGRAM_LLM_MODEL      default deepseek-flash
 SKILLGRAM_LLM_API_KEY    or DEEPSEEK_API_KEY / OPENAI_API_KEY
 ```
 
-The LLM **never writes files**. It proposes a JSON plan; skillgram validates it
-(categories must exist, skills must be real) and only then applies it. Turn it off
-with `--no-llm`.
+A project with a scope needs no LLM at all: that is *régime*, where skillgram only serves the
+set and answers "do we have something for this?".
 
-### What "apply" actually does
-
-1. Copies each native skill into `<hub>/<categoria>/<skill>`.
-2. Verifies the copy has the same content hash; if not, removes the copy and
-   reports a failure. Nothing is silently lost.
-3. Runs `sync`, so every harness gets links.
-
-By default the **original native copy stays where it was** (so `sync` reports it as
-a *collision* and skips it). To really unify, add:
+### Finding, judging and retiring skills
 
 ```bash
-skillgram onboard --scope all --apply --replace-natives
+skillgram index                                   # FTS5 index of the hub
+skillgram search "docker deploy vps" --limit 5
+skillgram missing "quote a mortgage"              # found | not found, with candidates
+skillgram review --days 90                        # never used / stale
+skillgram review --days 30 --fail-if-stale        # CI gate: exit 1 when the set is stale
+skillgram pin <skill>...                          # never reported as stale
+skillgram retire <skill>                          # -> <hub>/_retired/ + tombstone, never deleted
 ```
 
-That moves the original into `~/.agents/skillgram-quarantine/<harness>/<skill>`
-(never deletes it) and leaves a junction in its place.
+`use` stamps `last_used`, `use_count` and `last_used_by`. `_retired/` keeps the content plus
+`_retired.json` (who, when, why, hash) and is never treated as a category.
 
-## What skillgram does NOT do (on purpose)
-
-Agents that already ship their own skills — Hermes bundles dozens — keep them
-exactly as they are:
-
-- `sync` only **adds** links. It never copies, moves, adopts or deletes native skills.
-- A native skill with the same name as a hub skill is **skipped** (reported as
-  *collision*), never overwritten.
-- `doctor` tells you how many native skills each agent has, before you touch anything.
-
-## Project scope (engram-style)
-
-The hub stays the only store; a project gets a *view* of it.
+### Moving a hub around
 
 ```bash
-skillgram init my-api                 # <project>/.agents/config.json
-skillgram use archify ad3 --project . # junction + manifest, idempotent
-skillgram project-status              # sane / stale / broken / missing links
-skillgram unuse archify
+skillgram export hub.tar.gz     # every skill + hub.json of hashes
+skillgram import hub.tar.gz     # verifies the hashes; --apply to materialize
+skillgram diff <skill> --against <path>   # divergence between two copies
+skillgram git init --apply      # the hub as a repo (adds a .gitignore for the index)
+skillgram git pull --apply      # ff-only: git resolves conflicts, skillgram never guesses
 ```
 
-```
-<project>/.agents/config.json    {"project_name": "my-api"}
-<project>/.agents/skills/<name>  junction to the hub
-<project>/.agents/skills.json    manifest: tipo, source, hash, promoted_at
-```
+The hub is the asset. With git under it, "sync between machines" is git's job.
 
-Resolution order (same as engram):
+## What it does NOT do (on purpose)
 
-```
---project  ->  SKILLGRAM_PROJECT  ->  nearest .agents/config.json up to the git root  ->  cwd
-```
+- It never copies, moves or deletes a native skill. Collisions are reported, not resolved.
+- It never edits a harness config by hand: MCP registration goes through that harness' CLI.
+- It never guesses which harness is asking (`SKILLGRAM_HARNESS` → `--harness` → process tree →
+  `unknown`, and it says so).
+- It never publishes a skill nobody approved.
+- It is not a memory store, a prompt library, or an embeddings index.
 
-If it cannot resolve, it says so. It never guesses.
+## Safety
 
-`project-status` also flags **duplicated local skills**: a skill that lives both
-in the hub and as a real copy inside the project (promote it, delete the copy).
+- Links only. Dead-link cleanup only touches links that resolve inside the hub — never
+  content, never a real directory.
+- `onboard` copies and verifies the hash before reporting success; the original only moves to
+  `~/.agents/skillgram-quarantine/<harness>/<skill>` with `--replace-natives`, and never to the
+  bin.
+- Nothing in your repos changes unless you run `init`, `use`, `mount` or `install --root`.
+- Preview anything: `install --dry-run`, `sync --dry-run`, `onboard --json --plan plan.json`.
+
+## Report a bug or a gap
+
+Two different things, two different channels — mixing them is how a roadmap turns into noise.
+A **gap** (the hub has nothing for a capability) is a *request*: `skillgram_missing` answers
+`found:false`, the agent offers `propose`, and the query is recorded in the demand log
+(`skillgram demand` ranks what nobody could answer). A **bug** (skillgram itself failed) is one
+JSON line with `ok:false` and a non-zero exit — never dressed up as a skill.
+
+The repo ships both forms in `.github/ISSUE_TEMPLATE/` (`bug_report.yml`, `skill_request.yml`)
+and the skill that walks an agent through them:
+[`skills/skillgram-report`](skills/skillgram-report/SKILL.md).
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `doctor` | installed harnesses, native skills per agent, collisions, dead/missing links. Read-only. |
-| `onboard` | detect harnesses and consolidate their skills into the hub (LLM optional). |
-| `status` | current drift. `--verify` also checks where each link points. |
-| `sync` | apply the desired state. Idempotent. `--dry-run` to preview. |
-| `watch` | poll the hub and re-sync on add/remove/rename. |
-| `daemon` | JSON-line server over stdin/stdout, for supervisors. |
-| `init [name]` | write `<project>/.agents/config.json`. `--force` to replace. |
-| `install` | one idempotent command: harness → hub → MCP (delegated to the harness CLI) → propagate. `--dry-run` to preview. |
-| `propagate` | mount + protocol + ledger for every git repo of one harness under `--root` (`--apply`, `--force`, `--depth`). |
-| `use <skill>...` | promote hub skills into the project (junction + manifest). |
-| `unuse <skill>...` | remove them from the project scope. |
-| `project-status` | health of a project scope. |
-| `install-autostart` / `uninstall-autostart` | login task (Windows) that keeps `watch` alive. |
+| `doctor` | harnesses, native skills, collisions, dead/missing links. Read-only. |
+| `status` / `sync` | drift now / apply the desired state. `--verify`, `--dry-run`. |
+| `install` / `propagate` | the whole machine / the repo sweep, with a ledger. |
+| `onboard` / `adopt` | consolidate what harnesses already have (LLM optional) / cooperative adoption. |
+| `init` / `use` / `unuse` / `mount` / `project-status` | the project scope. |
+| `index` / `search` / `missing` / `demand` | find, or learn what is missing. |
+| `review` / `pin` / `retire` | lifecycle. |
+| `export` / `import` / `diff` / `git` | move a hub around. |
+| `mcp` | stdio MCP server (`--read-only`). |
+| `lint` | quality gate: frontmatter, name, description, size. |
+| `watch` / `daemon` / `install-autostart` | keep it in sync by itself. |
 
-Every command prints **exactly one JSON line** on stdout (`--json` for the human
-ones too). Exit code `0` healthy, `1` drift/error, `2` bad invocation.
+`skillgram --help` lists all of them (33); `skillgram <command> --help` is the contract for
+one. Every command prints **exactly one JSON line** on stdout (`--json` for the human ones too).
+Exit code `0` healthy, `1` drift/error, `2` bad invocation.
 
 ```json
 {"ok":true,"op":"status","version":"1.2.0","hub":"C:\\Users\\me\\.agents\\skills","skills":842,"categories":18,"nested":12,"agents":50,"drift":0,"watching":false,"missing":0,"mispointed":0,"dead":0,"skipped":2}
 ```
 
-The table above is the dozen commands you will actually type; `skillgram --help` lists all
-of them (there are 33), and `skillgram <command> --help` is the contract for one.
+## Known gaps (documented, not implemented)
 
-## How agent discovery works
+Compared with Engram (Gentleman-Programming), which is a service with a full lifecycle, these
+remain open by decision. When one closes, the line goes away.
 
-`doctor`, `sync` and `onboard` look for `skills/` folders under every
-`~/.<something>/` (plus `%APPDATA%/Reasonix`). Known harnesses are labelled
-(`claude-code`, `codex`, `cursor`, `hermes`, `gemini-cli`, `opencode`, `copilot`,
-`windsurf`, `kiro`, `qwen-code`, `aider`, `antigravity`, `kilo`, `commandcode`,
-`reasonix`); anything else with a `skills/` folder is treated the same way.
+1. **No cross-machine sync.** `export`/`import` is manual; there is no transport and no
+   conflict resolution between two hubs. (`git` under the hub is the workaround.)
+2. **No merge of divergent skills.** Same name + different content fails; the merge is a human
+   (or LLM) decision, then `diff` tells you exactly what differs.
+3. **No real usage telemetry.** `use_count` counts explicit promotions and MCP `use` calls;
+   skillgram does not observe which skills an agent actually reads.
+4. **Lexical search only.** FTS5 has no embeddings, so cross-language synonyms miss (measured:
+   `"cotizar credito hipotecario"` → one weak hit).
+5. **No permissions/profiles.** No agent/admin split: anyone with a shell can publish or
+   retire. `mcp --read-only` removes the write tools from a session, but it is a per-server
+   switch, not a role.
+6. **No taste gate.** `lint` checks shape and is a hard gate in `propose`, but nothing judges
+   whether a skill is *useful*: no eval, no grading, no dry run of the skill itself.
+7. **No scheduled review.** `review` is manual; put `review --fail-if-stale` in your cron/CI.
+8. **MCP is tools-only.** No `resources`, no `prompts`, no sampling.
 
-Each agent gets two kinds of links:
+## Language
 
-- **one per category** (`skills/<tipo>` -> `hub/<tipo>`): browsable.
-- **one flat per skill** (`skills/<skill>` -> `hub/<tipo>/<skill>`): for harnesses
-  that only scan one level.
+Everything user-facing is **English**: CLI output, error messages and every JSON key
+(`promoted`, `already_present`, `missing_links`, `native`, `collisions`, `signals`,
+`selection`, ...). That is the API other tools read. Internal code comments and docstrings are
+still partly Spanish; translating them is tracked as cleanup, not as behaviour.
 
-## Safety
+## Prior art and credits
 
-- Links only. `sync` removes dead junctions **that point into the hub** — never
-  content, never a real directory.
-- `onboard` copies and verifies the hash before reporting success; the original
-  only moves to quarantine with `--replace-natives`.
-- Never touches your repos unless you run `init` / `use`.
-- Preview anything: `sync --dry-run`, `onboard --json --plan plan.json`.
+skillgram is original code (MIT, stdlib only), but the ideas are not mine and pretending
+otherwise would be dishonest. These shaped it — if one of them is what you actually need, use
+it directly:
+
+- **Engram** — the project-scope resolution order (`--project` → env → nearest
+  `.agents/config.json` up to the git root → cwd), the "one store, a per-project view" model,
+  and the CLI-plus-MCP split this repo copied the shape of.
+- **Agent Skills / `SKILL.md`** (Claude Code, then everyone else) — the `SKILL.md` + YAML
+  frontmatter format and the `.claude/skills` convention every other harness imitated.
+  skillgram does not invent a format: it links yours.
+- **Codex, Cursor, Gemini CLI, Kiro, Qwen Code, Aider, OpenCode, Copilot** — their
+  project-level `skills/` layouts are the reason `mount` knows eleven of them.
+- **ECC** — a 291-skill pack that lives next to this hub, and the reason every feature here is
+  tested against "does this still hold at ~850 skills?".
+- **Unix**, in the only sense that matters: one directory is the truth, every agent a client.
+
+No code was copied from any of them. Where a behaviour was learned from another tool, the
+section that documents it says so. If your project belongs in this list, open an issue — credit
+is cheap, respect is not.
+
+## Where the detail lives
+
+| You want | Read |
+|---|---|
+| to install on a machine, or hand it to an agent | [INSTALL.md](INSTALL.md) |
+| what changed, version by version | [CHANGELOG.md](CHANGELOG.md) |
+| the install flow as a diagram | [docs/diagrams/skillgram-install.html](docs/diagrams/skillgram-install.html) |
+| the rules this repo holds itself to | [AGENTS.md](AGENTS.md) |
+| how to report something | [skills/skillgram-report](skills/skillgram-report/SKILL.md) |
 
 ## Tests
 
@@ -197,355 +295,6 @@ Each agent gets two kinds of links:
 python -m unittest discover -s tests -v
 ```
 
-## Prior art and credits
-
-skillgram is original code (MIT, stdlib only, no dependencies), but the *ideas* are not
-mine and pretending otherwise would be dishonest. These shaped it — if one of them is
-what you actually need, use it directly:
-
-- **Engram** — the project-scope resolution order (`--project` → env → nearest
-  `.agents/config.json` up to the git root → cwd), the "one store, a per-project view"
-  model, and the CLI-plus-MCP split this repo copied the shape of. This README says
-  "engram-style" wherever that applies.
-- **Agent Skills / `SKILL.md`** (Claude Code, then everyone else) — the `SKILL.md` +
-  YAML frontmatter format, and the `.claude/skills` convention all other harnesses
-  imitated. skillgram does not invent a format: it links yours.
-- **Codex, Cursor, Gemini CLI, Kiro, Qwen Code, Aider, OpenCode, Copilot** — their
-  project-level `skills/` layouts are the reason `mount` knows thirteen of them.
-- **ECC** — a 291-skill pack that lives next to this hub, and the reason every feature
-  here gets tested against "does this still hold at ~850 skills?".
-- **Unix**, in the only sense that matters: one directory is the truth, and every agent is
-  a client of it.
-
-No code was copied from any of them. Where a behaviour was learned from another tool, the
-section that documents it says so. If you think your project belongs in this list, open an
-issue — credit is cheap, respect is not.
-
 ## License
 
 MIT.
-
-## Mounting model (v0.2)
-
-**soft-mount + precedence + auto-adoption.** Nothing is moved or replaced by default:
-
-- `skillgram precedence` declares the hub **first** in each harness's own config
-  (`skills.paths` for Reasonix, `skills.external_dirs` for Hermes). Backups are
-  written next to the file (`*.skillgram-bak-<timestamp>`). If you delete
-  skillgram, every harness keeps exactly what it had.
-- `skillgram adopt <path>` (or `--all`) is the cooperative "hijack": copies the
-  native skill into the hub, verifies the hash, moves the original to
-  `~/.agents/skillgram-quarantine/<harness>/<skill>` and leaves a junction in its
-  place. Never deletes.
-- The hard-mount model (one junction for the whole `skills/` dir) is **not** the
-  default on purpose: a `rimraf skills` or a harness uninstall would wipe the
-  whole library of every agent.
-
-## Flavor and porting
-
-The hub keeps **everything**; scope is not trimmed per harness. What changes is
-the wording:
-
-```bash
-skillgram flavor                 # detect which agent each skill is wired to
-skillgram flavor --apply         # persist it in SKILLMETA.json (SKILL.md untouched)
-skillgram port --apply           # generate agents/<harness>.md where a port is missing
-skillgram port my-skill --to reasonix --apply
-```
-
-`skillgram port` asks the connected LLM to translate the skill for the target
-harness (CLI names, subagent mechanics) and writes **only** `agents/<harness>.md`
-inside the skill. The original stays generic, so any harness can still read it;
-the ported fragment is what the target harness should follow.
-
-## Scope: the project is the unit
-
-The hub is the library; a *project* is what an agent actually needs while working
-in it.
-
-```bash
-skillgram init                 # project identity
-skillgram use <skill>...       # this project needs these
-skillgram project-status       # drift of that scope
-skillgram mount                # materialize the project scope into each harness
-```
-
-`mount` writes the project's set where harnesses look **per project**
-(`<project>/.agents/skills`, `<project>/.claude/skills`, `<project>/.cursor/rules`),
-so two different agents working on the same repo see the same skills without
-depending on their global homes.
-### Strict project-only (default target)
-
-The hub holds the library (900+ skills exist), but a harness working inside a
-project sees **only that project's set** — 20 skills, not 900:
-
-```bash
-skillgram mount --apply              # materialize the project scope per harness
-skillgram mount --apply --prune-global   # strict: also drop the hub links from ~/.<harness>/skills
-```
-
-`mount` writes links only inside the project, in every place a harness looks when
-it works there:
-
-| Harness | Project dir |
-|---|---|
-| Hermes | `.agents/skills`, `.hermes/skills` |
-| Claude Code | `.claude/skills` |
-| Codex | `.codex/skills` |
-| Cursor | `.cursor/skills` |
-| Gemini CLI | `.gemini/skills` |
-| Copilot | `.github/skills` |
-| Kiro / Qwen / Aider / OpenCode | `.kiro/skills`, `.qwen/skills`, `.aider/skills`, `.opencode/skills` |
-
-So two different agents working on the same repo see the same skills, and
-skillgram's only job is: be the hub, and fill the gaps (adopt what a harness
-installs, port the flavor when a skill is wired to another agent).
-
-`--prune-global` is the strict switch: it removes the hub links from the harness
-homes (only links that resolve into the hub; native skills stay). After that, a
-harness outside a project sees nothing from the hub — by design.
-## Two modes: bootstrap (LLM decides) and régime (skillgram only serves)
-
-skillgram is explicit about this: **a connected LLM is used to administer the
-library**, and only in two places — choosing a project's initial set, and writing
-a skill that does not exist yet. It never deletes, and never writes without
-approval. Every automatic decision is stamped `by: llm:<model>` in the project
-manifest and logged to `~/.agents/skillgram-llm.log`. `doctor` reports which model
-is connected; `--no-llm` and `SKILLGRAM_LLM=off` turn it off.
-
-### Bootstrap — a repo with no scope yet
-
-```bash
-skillgram bootstrap            # asks for confirmation; add --apply to register
-skillgram bootstrap --apply    # register the chosen set in this project
-```
-
-1. **Deterministic signals** from the repo (`package.json`/deps, `go.mod`,
-   `Dockerfile`, `compose`, CI, `prisma`, `.env.example`, ...).
-2. **Catalog filter**: 900 skills → ~50 candidates by category, name and text match.
-3. **The LLM picks the set and justifies each one**, plus the gaps it sees:
-   `{"selected":[{"skill":"docker-patterns","why":"repo has Docker"}], "gaps":["CI config"]}`.
-4. `--apply` registers them with `why` + `by` in `.agents/skills.json`.
-
-### Filling a gap
-
-```bash
-skillgram propose "github actions CI for a dockerized node app"           # draft only
-skillgram propose "github actions CI for a dockerized node app" --apply   # publish + register
-```
-
-The LLM writes the `SKILL.md` (frontmatter + Activation Contract / Hard Rules /
-Decision Gates / Execution Steps / Output Contract). skillgram **validates** it
-(frontmatter, unique name, non-empty body), publishes it into the hub, registers it
-in the project and mounts it. Nothing is published without `--apply`.
-
-### Régime — a project that already has skills
-
-No LLM. skillgram just serves the set and answers "do we have something for this?":
-
-```bash
-skillgram missing "deploy to a vps"
-# {"found": true, "candidates": [{"skill": "docker-local-vps-deploy", "score": 3}]}
-skillgram missing "quote a mortgage"
-# {"found": false, "candidates": []}
-```
-
-When `found` is `false`, skillgram stops there: **the agent** (Hermes, Claude,
-Codex, Reasonix, ...) is the one that proposes something to the user. skillgram
-only administers.
-## Search, lifecycle, portability and MCP (0.5)
-
-```bash
-skillgram index                          # FTS5 index over the hub (~/.agents/skillgram-index.db)
-skillgram search "docker deploy vps" --limit 5
-skillgram mcp                            # MCP server (stdio) for the agent
-```
-
-MCP tools exposed: `skillgram_search`, `skillgram_missing`, `skillgram_use`,
-`skillgram_status`, `skillgram_propose`. With this, an agent asks the hub **as a
-tool call** instead of shelling out: `missing` returning `{"found": false}` is the
-contract that says "do not invent, tell the user".
-
-Lifecycle (answers "is this skill still alive?"):
-
-```bash
-skillgram review --days 90        # never used / not used recently
-skillgram pin <skill>...          # pinned skills never show up as stale
-skillgram retire <skill>          # moves it to <hub>/_retired/ + tombstone, never deletes
-```
-
-`use` now stamps `last_used`, `use_count` and `last_used_by` in the project manifest.
-`_retired/` keeps the content plus `_retired.json` (who/when/why/hash), and `_retired`
-is never treated as a category.
-
-Portability:
-
-```bash
-skillgram export hub.tar.gz       # tar.gz with every skill + hub.json of hashes
-skillgram import hub.tar.gz       # verifies hashes; --apply to materialize
-```
-
-## Known gaps (documented, not implemented)
-
-Compared with Engram (Gentleman-Programming), which is a service with full lifecycle,
-these remain open by decision:
-
-1. **No cross-machine sync.** `export`/`import` is manual: there is no transport
-   (git/cloud) and no conflict resolution between two hubs.
-2. **No merge of divergent skills.** Same name + different content fails instead of
-   merging; a merge has to be proposed by hand (or by the LLM) and applied.
-3. **No real usage telemetry.** `use_count` counts explicit promotions and MCP `use`
-   calls; skillgram does not observe which skills an agent actually reads.
-4. **Lexical search only.** FTS5 has no embeddings, so synonyms across languages still
-   miss (measured: `"cotizar credito hipotecario"` → 1 weak hit).
-5. **No permissions/profiles.** No agent/admin split: anyone with a shell can publish
-   or retire. `mcp --read-only` removes the write tools from an agent session, but it is a
-   per-server switch, not a role. Engram separates tool profiles.
-6. **No taste gate.** `lint` checks shape (frontmatter, `name`, description length, body
-   size) and is a hard gate in `propose`, but nothing judges whether a skill is *useful*:
-   no eval, no grading, no dry run of the skill itself.
-7. **No scheduled review.** `review` is manual; there is no cadence, cron or
-   notification when a project's set goes stale.
-8. **MCP is tools-only.** No `resources`, no `prompts`, no sampling.
-## Language
-
-Everything user-facing is **English**: the CLI output, error messages and every
-JSON key (`promoted`, `already_present`, `missing_links`, `native`, `collisions`,
-`signals`, `selection`, ...). That is the API other tools read.
-
-Internal code comments and docstrings are still partly Spanish; translating them is
-tracked as cleanup, not as behaviour.
-## Demand log and a git-backed hub (0.8)
-
-```bash
-skillgram missing "quote a mortgage"   # every call is recorded
-skillgram demand                       # what the hub could NOT cover, ranked by times asked
-```
-
-`demand` is the roadmap: the queries nobody could answer. `covered_queries` counts
-the ones the hub did answer, so you can see the ratio. (In this workspace, `quote a
-mortgage` showed up 3 times across sessions — that is a skill waiting to be written.)
-
-```bash
-skillgram git status        # is the hub a repo? dirty?
-skillgram git init --apply  # make the hub a git repo (adds .gitignore for the index)
-skillgram git pull --apply  # ff-only: git resolves conflicts, skillgram does not
-skillgram git push --apply
-```
-
-The hub is the asset. With git under it, "sync between machines" is git's job —
-skillgram only reports and pushes. Conflicts are resolved by git, never by
-skillgram guessing which skill version wins.
-
-### A gap is a request; a bug is not
-
-Two different things, two different channels — mixing them is how a roadmap turns into
-noise:
-
-| | What it is | Where it goes |
-|---|---|---|
-| **Gap** | the hub has nothing for a capability the agent needed | `skillgram_missing` → `found:false` → the agent tells you and offers `skillgram propose "<need>"`. The query is recorded in the demand log (`~/.agents/skillgram-index.db`, table `demand`); `skillgram demand` ranks them. The LLM drafts, `lint` gates it, you approve with `--apply`, and the manifest stamps `by: llm:<model>` (+ `~/.agents/skillgram-llm.log`). |
-| **Bug** | skillgram itself failed (bad link, wrong argv, crash) | one JSON line on stdout with `ok:false` + `error` and a non-zero exit (`1` problem, `2` bad invocation); with `--json` it is machine-readable. Nothing is hidden and nothing is "fixed" silently. The issue tracker is the honest channel: a bug is never filed as a skill. |
-
-What the agent must never do: invent a skill to paper over a gap, or describe a bug as
-"a skill we should add". The protocol block injected into each project says exactly this,
-and `mcp --read-only` removes the write tools entirely for untrusted sessions.
-
-The repo ships both forms — `.github/ISSUE_TEMPLATE/bug_report.yml` and
-`skill_request.yml` — so a report arrives with the command, the output and the exit code
-instead of a paragraph. `config.yml` routes install failures to [INSTALL.md](INSTALL.md)
-first, because that is what most of them are.
-
-### The one skill this repo ships (1.2)
-
-`skills/skillgram-report/SKILL.md` is a real, lint-clean skill: it teaches an agent to decide
-the channel, capture the evidence (command, exit code, one JSON line, `doctor --json`, the
-harness config read back **after** the command that claimed success), redact it, and only
-then open the issue. It is the only skill here, and it exists because "a bug is not a skill"
-is a rule an agent has to be told, not a rule it follows by accident.
-
-Install it into your own hub like any other skill — the hub is the library, this repo is
-just the source:
-
-```powershell
-Copy-Item -Recurse skills\skillgram-report $HOME\.agents\skills\meta-skills\
-skillgram index
-skillgram sync
-```
-
-### The install flow, as a diagram
-
-[docs/diagrams/skillgram-install.html](docs/diagrams/skillgram-install.html) is a standalone,
-self-contained diagram of what `install` does — resolve → hub → probe → delegate → **re-read
-the config** → propagate → report — with the hard stops. Open it locally; GitHub serves the
-file, not a rendered page. The source is the JSON next to it (`docs/diagrams/skillgram-install.json`),
-authored with [archify](https://github.com/tt-a1i/archify).
-
-## Remaining gaps
-
-There is one list, above ("Known gaps"), and it is kept honest. What used to be here said
-`mcp` "could grow a `--read-only`" and that there was "no CI gate": both shipped in 0.9
-(`skillgram mcp --read-only`, `review --fail-if-stale`). When a gap closes, delete the line
-instead of adding a second list.
-
-## Read-only MCP, CI gate and diff (0.9)
-
-```bash
-skillgram mcp --read-only     # the agent can query the hub but cannot use/propose
-skillgram review --days 30 --fail-if-stale   # exit 1 when the project set is stale (CI gate)
-skillgram diff <skill> --against <path>      # divergence between two copies of the same skill
-```
-
-`diff` is what you reach for when the hub lives in git and two machines changed the
-same skill: it tells you which files differ, which exist only here and which only
-there. Merging stays a human (or LLM) decision — skillgram never guesses.
-## `mount` from any repo
-
-`mount` resolves the project like engram (cwd → nearest `.agents/config.json` up to
-the git root), so you can run it from **any repo, any subdirectory**. If that repo
-has no skills in scope yet, `mount` offers to bootstrap it with the connected LLM:
-
-```bash
-cd ~/code/my-repo/subdir
-skillgram mount --apply --yes     # no scope -> LLM picks the set -> mount -> protocol
-skillgram mount --apply --no-bootstrap   # never bootstrap, only mount what exists
-```
-
-Then it propagates that set to every harness that reads project-level dirs, and
-writes the skillgram protocol into `AGENTS.md`/`CLAUDE.md`.
-
-## `install`: one command per machine (1.1)
-
-```bash
-skillgram install --dry-run                     # the exact commands, nothing written
-skillgram install                               # hub -> MCP -> propagate, idempotent
-skillgram install --harness codex --root C:\proyectos
-skillgram propagate --harness codex --root C:\proyectos --apply   # the sweep on its own
-```
-
-`install` reports what it did in three blocks — `done now`, `already in place`,
-`to take effect` — plus `needs you` when something is blocked:
-
-1. **Resolves the harness**: `SKILLGRAM_HARNESS` (the value `install` writes into
-   the MCP registration) → `--harness` → the process tree → `unknown`, and it
-   says so instead of guessing.
-2. **Creates or verifies the hub** (`~/.agents/skills`, or `--hub`).
-3. **Registers the MCP server by delegating to the harness' own CLI**:
-   `reasonix mcp add`, `codex mcp add`, `claude mcp add`, `hermes mcp add`,
-   `gemini mcp add`. skillgram never edits a harness config by hand. The server
-   gets `SKILLGRAM_HARNESS` and `SKILLGRAM_HUB` in its environment, so it always
-   serves the same hub and knows who is asking.
-4. **Propagates** `mount --apply` + the protocol block + a ledger entry to the
-   repos of that harness that are not yet in `~/.agents/skillgram-ledger.json`.
-5. **Says what takes effect when**: Codex restarts the session, Claude Code
-   restarts the CLI, Reasonix needs `/reload`, Cursor needs a Reload Window.
-
-`propagate` is that last step alone: it discovers git repos under `--root`
-(depth-bounded, skipping `node_modules`/`dist`/…), skips what the ledger already
-knows (`--force` to redo it), and never invents a set — a repo with no scope is
-reported with the exact next command (or `--bootstrap` to let the connected LLM
-pick one).
-
-Cursor has no MCP CLI: `install` says so and points at the UI instead of editing
-`.cursor/mcp.json` behind your back. Nothing is guessed, nothing is copied, and
-running it twice is a no-op.
