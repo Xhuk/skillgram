@@ -516,6 +516,8 @@ class InstallCase(HomeCase):
         self._env = {k: os.environ.get(k) for k in self.ENV_KEYS}
         for key in self.ENV_KEYS:
             os.environ.pop(key, None)
+        for key in [k for k in os.environ if k.startswith("SKILLGRAM_MCP_CLI_")]:
+            os.environ.pop(key, None)
         self.ledger = self.tmp / "ledger.json"
         os.environ["SKILLGRAM_LEDGER"] = str(self.ledger)
         os.environ["SKILLGRAM_MCP_CMD"] = f"{sys.executable} {self.tmp / 'skillgram.py'} mcp"
@@ -633,6 +635,37 @@ class TestMcpDelegation(InstallCase):
         skillgram._which = lambda name: None
         got = skillgram.register_mcp(skillgram.Hub(self.hub_root), "hermes", apply=True, runner=FakeCli())
         self.assertEqual(got["state"], "not-installed")
+        self.assertIn("SKILLGRAM_MCP_CLI_HERMES", got["detail"])
+
+    def test_a_cli_that_exits_zero_without_saving_is_not_success(self):
+        class SilentCli(FakeCli):
+            """Like hermes: exits 0 after its own Y/n prompt was cancelled."""
+
+            def __call__(self, argv):
+                argv = [str(a) for a in argv]
+                self.calls.append(argv)
+                verb = argv[2] if len(argv) > 2 else ""
+                if verb == "list":
+                    return 0, "no servers configured"
+                if verb == "get":
+                    return 1, "not found"
+                return 0, "  Enable all 5 tools? [Y/n/select]: \n  Cancelled."
+
+        got = skillgram.register_mcp(skillgram.Hub(self.hub_root), "hermes", apply=True, runner=SilentCli())
+        self.assertEqual(got["state"], "failed")
+        self.assertFalse(got["verified"])
+        self.assertIn("not registered", got["detail"])
+
+    def test_cli_override_wins_over_path(self):
+        launcher = self.tmp / "hermes-gov.cmd"
+        launcher.write_text("@echo off\n", encoding="utf-8")
+        os.environ["SKILLGRAM_MCP_CLI_HERMES"] = str(launcher)
+        cli = FakeCli()
+        got = skillgram.register_mcp(skillgram.Hub(self.hub_root), "hermes", apply=True, runner=cli)
+        self.assertEqual(got["cli"], str(launcher))
+        self.assertEqual(got["state"], "registered")
+        self.assertEqual(cli.adds()[0][0], str(launcher))
+        self.assertEqual(cli.calls[0][0], str(launcher))  # the probe uses it too
 
     def test_launch_never_picks_a_script_or_shim(self):
         os.environ.pop("SKILLGRAM_MCP_CMD", None)

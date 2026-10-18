@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.1.1 — install brief, real verification, multi-launcher harnesses
+
+- **`INSTALL.md`**: a copy-paste brief to hand to a fresh agent session (what to run, what
+  to verify, and the rules it may not break), plus the env switches, the per-harness table
+  and the traps. README points at it from `## Install`.
+- **Registration is verified, not assumed**: after `mcp add`, the config is probed again.
+  Hermes exits **0** when its own "Enable all N tools? [Y/n/select]" prompt is cancelled
+  (stdin is closed, so it always was), which made a cancelled registration look successful.
+  skillgram now answers that prompt and reports `failed` whenever nothing was actually
+  written.
+- **`SKILLGRAM_MCP_CLI_<HARNESS>`**: pick the launcher that owns the config when a harness
+  ships more than one (a shared install plus an isolated `HERMES_HOME`, a venv shim next to
+  a self-updating one). It is used for the probe, the `mcp add` and the `mcp remove` hint.
+- `hermes mcp list` truncates the command, so the "registered but points elsewhere" check is
+  skipped for hermes instead of firing on a cut-off path.
+- 72 stdlib tests.
+
 ## 1.1.0 — `install`, `propagate` and a ledger
 
 One idempotent command per machine: `skillgram install`.

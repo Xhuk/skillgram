@@ -76,7 +76,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto
@@ -2393,6 +2393,11 @@ HARNESS_ENV = "SKILLGRAM_HARNESS"
 LEDGER_ENV = "SKILLGRAM_LEDGER"
 MCP_CMD_ENV = "SKILLGRAM_MCP_CMD"
 
+# Harness CLIs that ask a Y/n question before writing anything. stdin is closed on
+# purpose (a harness must never block on a prompt), so answer the one question we
+# know: hermes asks "Enable all N tools?" for the server it just discovered.
+INTERACTIVE_ADD = {"hermes"}
+
 HARNESS_ALIASES = {
     "claude": "claude-code",
     "claude_code": "claude-code",
@@ -2626,34 +2631,51 @@ def mcp_env_pairs(hub: Hub, harness_name: str) -> list:
     return [f"{HARNESS_ENV}={harness_name}", f"SKILLGRAM_HUB={hub.root}"]
 
 
-def mcp_add_argv(client: str, name: str, launch: list, envs: list) -> list:
+def harness_cli(harness_name: str, client: str) -> str | None:
+    """The CLI to delegate to: SKILLGRAM_MCP_CLI_<HARNESS> wins over PATH.
+
+    Some harnesses ship more than one launcher (a shared install plus an isolated
+    home, or a venv shim next to a self-updating one). The override is the only
+    supported way to say which one owns the config skillgram has to write.
+    """
+    key = "SKILLGRAM_MCP_CLI_" + harness_name.upper().replace("-", "_")
+    override = (os.environ.get(key) or "").strip()
+    if override:
+        return override
+    return _which(client)
+
+
+def mcp_add_argv(client: str, name: str, launch: list, envs: list, binary: str | None = None) -> list:
     """The exact `mcp add` command for each harness CLI (verified against the real CLIs)."""
+    exe = binary or client
     if client == "reasonix":
-        return ["reasonix", "mcp", "add", name, *[f"--env={e}" for e in envs], *launch]
+        return [exe, "mcp", "add", name, *[f"--env={e}" for e in envs], *launch]
     if client == "codex":
-        return ["codex", "mcp", "add", name,
+        return [exe, "mcp", "add", name,
                 *[x for e in envs for x in ("--env", e)], "--", *launch]
     if client == "claude":
-        return ["claude", "mcp", "add", name, "-s", "user",
+        return [exe, "mcp", "add", name, "-s", "user",
                 *[x for e in envs for x in ("-e", e)], "--", *launch]
     if client == "hermes":
-        return ["hermes", "mcp", "add", name, "--env", *envs,
+        return [exe, "mcp", "add", name, "--env", *envs,
                 "--command", launch[0], "--args", *launch[1:]]
     if client == "gemini":
-        return ["gemini", "mcp", "add", name, *[x for e in envs for x in ("-e", e)], *launch]
+        return [exe, "mcp", "add", name, *[x for e in envs for x in ("-e", e)], *launch]
     raise ValueError(f"no mcp add form for {client}")
 
 
-def mcp_probe_argv(client: str, name: str) -> list:
+def mcp_probe_argv(client: str, name: str, binary: str | None = None) -> list:
+    exe = binary or client
     if client == "hermes":
-        return ["hermes", "mcp", "list"]
-    return [client, "mcp", "get", name]
+        return [exe, "mcp", "list"]
+    return [exe, "mcp", "get", name]
 
 
-def mcp_remove_argv(client: str, name: str) -> list:
+def mcp_remove_argv(client: str, name: str, binary: str | None = None) -> list:
+    exe = binary or client
     if client == "claude":
-        return ["claude", "mcp", "remove", name, "-s", "user"]
-    return [client, "mcp", "remove", name]
+        return [exe, "mcp", "remove", name, "-s", "user"]
+    return [exe, "mcp", "remove", name]
 
 
 def _name_listed(text: str, name: str) -> bool:
@@ -2664,7 +2686,7 @@ def _first_lines(text: str, count: int = 6) -> str:
     return "\n".join((text or "").strip().splitlines()[:count])
 
 
-def run_cli(argv: list, timeout: int = 300) -> tuple:
+def run_cli(argv: list, timeout: int = 300, stdin_text: str | None = None) -> tuple:
     """Run a harness CLI. Returns (exit_code, combined output). Never raises."""
     spawn = list(argv)
     exe = _which(argv[0])
@@ -2675,7 +2697,9 @@ def run_cli(argv: list, timeout: int = 300) -> tuple:
             spawn = [exe, *argv[1:]]
     try:
         proc = subprocess.run(spawn, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=timeout, stdin=subprocess.DEVNULL)
+                              errors="replace", timeout=timeout,
+                              input=stdin_text,
+                              stdin=None if stdin_text is not None else subprocess.DEVNULL)
     except (OSError, subprocess.SubprocessError) as exc:
         return 127, f"{type(exc).__name__}: {exc}"
     return proc.returncode, ((proc.stdout or "") + (proc.stderr or "")).strip()
@@ -2690,31 +2714,55 @@ def register_mcp(hub: Hub, harness_name: str, apply: bool = True, runner=None) -
         out["detail"] = (f"{harness_name} has no MCP CLI: register the server by hand once from the harness UI "
                          f"(Cursor: Settings > MCP), or run `skillgram install --harness <other>` there")
         return out
-    if not _which(client):
+    binary = harness_cli(harness_name, client)
+    if not binary:
         out["state"] = "not-installed"
-        out["detail"] = f"`{client}` is not on PATH, so the MCP server could not be registered"
+        out["detail"] = (f"`{client}` is not on PATH, so the MCP server could not be registered "
+                         f"(point at a launcher with SKILLGRAM_MCP_CLI_{harness_name.upper().replace('-', '_')})")
         return out
+    out["cli"] = binary
 
     launch = mcp_launch_argv()
     marker = launch[1] if len(launch) > 1 else launch[0]
     call = runner or run_cli
-    code, text = call(mcp_probe_argv(client, MCP_SERVER))
-    registered = code == 0 and (client != "hermes" or _name_listed(text, MCP_SERVER))
+
+    def probe():
+        code, text = call(mcp_probe_argv(client, MCP_SERVER, binary))
+        return code == 0 and (client != "hermes" or _name_listed(text, MCP_SERVER)), code, text
+
+    registered, code, text = probe()
     if registered:
         out.update({"state": "already", "exit": code, "detail": _first_lines(text)})
-        if os.path.normcase(marker) not in os.path.normcase(text or ""):
+        # `mcp get` prints the whole command; `hermes mcp list` truncates it, so the
+        # "points elsewhere" check would fire on a merely cut-off path.
+        if client != "hermes" and os.path.normcase(marker) not in os.path.normcase(text or ""):
             out["note"] = (f"a server named '{MCP_SERVER}' is already registered but it does not point at {marker}; "
-                           f"remove it first: {shell_cmd(mcp_remove_argv(client, MCP_SERVER))}")
+                           f"remove it first: {shell_cmd(mcp_remove_argv(client, MCP_SERVER, binary))}")
         return out
 
-    argv = mcp_add_argv(client, MCP_SERVER, launch, mcp_env_pairs(hub, harness_name))
+    argv = mcp_add_argv(client, MCP_SERVER, launch, mcp_env_pairs(hub, harness_name), binary)
     out["command"] = argv
     if not apply:
         out["state"] = "planned"
         return out
-    code, text = call(argv)
-    out.update({"state": "registered" if code == 0 else "failed", "exit": code,
-                "detail": _first_lines(text, 12)})
+    if runner is not None:
+        code, text = runner(argv)
+    else:
+        code, text = run_cli(argv, stdin_text="y\n" if client in INTERACTIVE_ADD else None)
+    out.update({"exit": code, "detail": _first_lines(text, 12)})
+    # A CLI can exit 0 without writing anything (hermes cancels its own Y/n prompt
+    # when stdin is closed). The registration is the config, so probe again.
+    verified, _pcode, ptext = probe()
+    out["verified"] = verified
+    if code == 0 and verified:
+        out["state"] = "registered"
+        return out
+    out["state"] = "failed"
+    if code == 0:
+        out["detail"] = (f"{_first_lines(text, 3).replace(chr(10), ' | ')} "
+                         f"(cli exited 0 but the server is not registered)")
+    elif ptext:
+        out["detail"] = _first_lines(ptext, 3)
     return out
 
 

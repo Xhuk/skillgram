@@ -45,6 +45,14 @@ Keep it that way unless there is a hard reason not to.
 - Harness identity order is fixed: `SKILLGRAM_HARNESS` -> `--harness` -> process
   tree -> `unknown`. Never extend `PROCESS_HARNESS` with a generic runtime
   (`node`, `python`).
+- **Never trust the CLI's exit code for the registration**: probe the config after
+  `mcp add` (hermes exits 0 after cancelling its own Y/n prompt). `INTERACTIVE_ADD`
+  is the small set of CLIs that ask before writing; answer the prompt there and
+  re-probe, don't widen it on a hunch.
+- `SKILLGRAM_MCP_CLI_<HARNESS>` is the only supported way to point at a launcher
+  that is not the one on `PATH` (several homes of the same harness exist in the
+  wild). Never edit `config.yaml`/`config.toml`/`.claude.json` to compensate.
+- `INSTALL.md` is the human/agent entry point: keep its commands true to the CLI.
 
 ## 0.5 additions
 

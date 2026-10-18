@@ -28,6 +28,16 @@ command at all).
 
 ## Install
 
+The whole machine in one idempotent command — and a copy-paste brief you can hand to a
+fresh agent session — is in **[INSTALL.md](INSTALL.md)**:
+
+```bash
+python skillgram.py install --dry-run   # what it would do, nothing written
+python skillgram.py install             # harness -> hub -> MCP (delegated) -> propagate
+```
+
+As a package:
+
 ```bash
 pip install skillgram
 ```
