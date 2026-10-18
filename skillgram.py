@@ -71,7 +71,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto
@@ -1999,7 +1999,7 @@ def pin_skill(project: Path, names: list, pinned: bool = True) -> dict:
     return {"ok": True, "op": "pin", "pinned": pinned, "skills": done}
 
 
-def review_list(hub: Hub, project: Path | None = None, days: int = 90) -> dict:
+def review_list(hub: Hub, project: Path | None = None, days: int = 90, fail_if_stale: bool = False) -> dict:
     """Skills promoted long ago and not used recently (or never used)."""
     manifest = _read_manifest(project) if project else {"skills": {}}
     now = time.time()
@@ -2019,7 +2019,8 @@ def review_list(hub: Hub, project: Path | None = None, days: int = 90) -> dict:
         if (now - ts) / 86400 >= days:
             stale.append({"skill": name, "dias": int((now - ts) / 86400), "use_count": entry.get("use_count")})
     return {"ok": True, "op": "review", "project": str(project) if project else None,
-            "threshold_days": days, "never_used": never, "stale": stale, "pinned": pinned}
+            "threshold_days": days, "never_used": never, "stale": stale, "pinned": pinned,
+            "ok": not (fail_if_stale and (never or stale))}
 
 
 def retire_skill(hub: Hub, name: str, reason: str = "") -> dict:
@@ -2157,7 +2158,7 @@ def mcp_call(hub: Hub, name: str, args: dict) -> dict:
     return {"ok": False, "error": f"unknown tool: {name}"}
 
 
-def mcp_serve(hub: Hub, stdin=None, stdout=None) -> int:
+def mcp_serve(hub: Hub, stdin=None, stdout=None, read_only: bool = False) -> int:
     """Server MCP minimo: initialize, tools/list, tools/call, ping."""
     import sys as _sys
 
@@ -2195,7 +2196,10 @@ def mcp_serve(hub: Hub, stdin=None, stdout=None) -> int:
             name = params.get("name")
             args = params.get("arguments") or {}
             try:
-                out = mcp_call(hub, name, args)
+                if read_only and name in ("skillgram_use", "skillgram_propose"):
+                    out = {"ok": False, "error": "read-only mode: this tool cannot write"}
+                else:
+                    out = mcp_call(hub, name, args)
             except Exception as exc:  # noqa: BLE001 - el server no debe morir
                 out = {"ok": False, "error": str(exc)}
             reply({"jsonrpc": "2.0", "id": mid, "result": {
@@ -2437,6 +2441,53 @@ def hub_git(hub: Hub, action: str = "status", apply: bool = False) -> dict:
         rc, out, err = _git(hub, *args)
         return {"ok": rc == 0, "op": "git", "action": action, "out": out[-800:], "error": err[-800:] or None}
     return {"ok": False, "op": "git", "error": f"unknown action: {action}"}
+
+# ---------------------------------------------------------------------------
+# Diff: dos copias de la misma skill divergieron? (con el hub en git, esto pasa)
+# ---------------------------------------------------------------------------
+
+
+def _file_hashes(skill_dir: Path) -> dict:
+    out = {}
+    if not skill_dir.is_dir():
+        return out
+    for f in sorted(skill_dir.rglob("*")):
+        if not f.is_file() or "__pycache__" in f.parts:
+            continue
+        rel = f.relative_to(skill_dir).as_posix()
+        h = hashlib.sha256()
+        try:
+            h.update(f.read_bytes())
+        except OSError:
+            continue
+        out[rel] = h.hexdigest()[:12]
+    return out
+
+
+def diff_skill(hub: Hub, name: str, against: Path) -> dict:
+    """Compara la copia del hub contra otra copia. No escribe nada."""
+    tipo = hub.skills().get(name)
+    if not tipo:
+        return {"ok": False, "op": "diff", "skill": name, "error": "not found in the hub"}
+    here = hub.root / tipo / name
+    there = Path(against)
+    if not (there / "SKILL.md").is_file() and (there / name / "SKILL.md").is_file():
+        there = there / name
+    if not there.is_dir():
+        return {"ok": False, "op": "diff", "skill": name, "error": f"not a directory: {there}"}
+    a, b = _file_hashes(here), _file_hashes(there)
+    changed = sorted(k for k in a.keys() & b.keys() if a[k] != b[k])
+    return {
+        "ok": True,
+        "op": "diff",
+        "skill": name,
+        "hub": str(here),
+        "against": str(there),
+        "equal": not changed and a.keys() == b.keys(),
+        "changed": changed,
+        "only_in_hub": sorted(a.keys() - b.keys()),
+        "only_in_against": sorted(b.keys() - a.keys()),
+    }
 
 # ---------------------------------------------------------------------------
 # Log y estado
@@ -2715,6 +2766,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_rev = sub.add_parser("review", parents=[common], help="skills never used or not used recently")
     p_rev.add_argument("--project")
     p_rev.add_argument("--days", type=int, default=90)
+    p_rev.add_argument("--fail-if-stale", action="store_true", help="exit 1 when something is stale (CI gate)")
     p_pin = sub.add_parser("pin", parents=[common], help="marca skills del proyecto como fijas (no caducan)")
     p_pin.add_argument("skills", nargs="+")
     p_pin.add_argument("--project")
@@ -2735,7 +2787,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_git = sub.add_parser("git", parents=[common], help="hub as a git repo: status | init | pull | push")
     p_git.add_argument("action", choices=["status", "init", "pull", "push"], nargs="?", default="status")
     p_git.add_argument("--apply", action="store_true")
-    sub.add_parser("mcp", parents=[common], help="server MCP (stdio) para que el agente consulte el hub")
+    p_diff = sub.add_parser("diff", parents=[common], help="compare a hub skill against another copy (divergence)")
+    p_diff.add_argument("skill")
+    p_diff.add_argument("--against", required=True, help="path to the other copy")
+    p_mcp = sub.add_parser("mcp", parents=[common], help="MCP server (stdio) so the agent can query the hub")
+    p_mcp.add_argument("--read-only", action="store_true", help="the agent can query but not write")
     sub.add_parser("doctor", parents=[common], help="inventario: harnesss, native, collisions, drift")
     p_status = sub.add_parser("status", parents=[common], help="drift actual sin tocar nada")
     p_status.add_argument("--verify", action="store_true", help="ademas verifica a donde apunta cada enlace (lento)")
@@ -2789,6 +2845,8 @@ def main(argv: list[str] | None = None) -> int:
         result = apply_precedence(hub, apply=args.apply)
     elif args.cmd == "lint":
         result = lint_hub(hub, only=args.skill, strict=args.strict)
+    elif args.cmd == "diff":
+        result = diff_skill(hub, args.skill, Path(args.against))
     elif args.cmd == "demand":
         result = demand_report(limit=args.limit)
     elif args.cmd == "git":
@@ -2799,7 +2857,7 @@ def main(argv: list[str] | None = None) -> int:
         result = index_search(" ".join(args.text), limit=args.limit)
     elif args.cmd == "review":
         proj = resolve_project(args.project)
-        result = review_list(hub, Path(proj["path"]), days=args.days)
+        result = review_list(hub, Path(proj["path"]), days=args.days, fail_if_stale=args.fail_if_stale)
     elif args.cmd == "pin":
         proj = resolve_project(args.project)
         result = pin_skill(Path(proj["path"]), args.skills, pinned=not args.unpin)
@@ -2812,7 +2870,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "import":
         result = import_hub(hub, Path(args.file), apply=args.apply)
     elif args.cmd == "mcp":
-        return mcp_serve(hub)
+        return mcp_serve(hub, read_only=args.read_only)
     elif args.cmd == "bootstrap":
         proj = resolve_project(args.project)
         cfg = None if args.no_llm else llm_config()
@@ -2967,6 +3025,8 @@ def main(argv: list[str] | None = None) -> int:
         result = apply_precedence(hub, apply=args.apply)
     elif args.cmd == "lint":
         result = lint_hub(hub, only=args.skill, strict=args.strict)
+    elif args.cmd == "diff":
+        result = diff_skill(hub, args.skill, Path(args.against))
     elif args.cmd == "demand":
         result = demand_report(limit=args.limit)
     elif args.cmd == "git":
@@ -2977,7 +3037,7 @@ def main(argv: list[str] | None = None) -> int:
         result = index_search(" ".join(args.text), limit=args.limit)
     elif args.cmd == "review":
         proj = resolve_project(args.project)
-        result = review_list(hub, Path(proj["path"]), days=args.days)
+        result = review_list(hub, Path(proj["path"]), days=args.days, fail_if_stale=args.fail_if_stale)
     elif args.cmd == "pin":
         proj = resolve_project(args.project)
         result = pin_skill(Path(proj["path"]), args.skills, pinned=not args.unpin)
@@ -2990,7 +3050,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "import":
         result = import_hub(hub, Path(args.file), apply=args.apply)
     elif args.cmd == "mcp":
-        return mcp_serve(hub)
+        return mcp_serve(hub, read_only=args.read_only)
     elif args.cmd == "bootstrap":
         proj = resolve_project(args.project)
         cfg = None if args.no_llm else llm_config()

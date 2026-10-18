@@ -403,3 +403,14 @@ skillgram guessing which skill version wins.
 3. No permissions/profile split (agent vs admin). `mcp` could grow a `--read-only`.
 4. No scheduled review; run `skillgram review --days N` from your own cron/CI.
 5. MCP is tools-only (no resources/prompts/sampling).
+## Read-only MCP, CI gate and diff (0.9)
+
+```bash
+skillgram mcp --read-only     # the agent can query the hub but cannot use/propose
+skillgram review --days 30 --fail-if-stale   # exit 1 when the project set is stale (CI gate)
+skillgram diff <skill> --against <path>      # divergence between two copies of the same skill
+```
+
+`diff` is what you reach for when the hub lives in git and two machines changed the
+same skill: it tells you which files differ, which exist only here and which only
+there. Merging stays a human (or LLM) decision — skillgram never guesses.
