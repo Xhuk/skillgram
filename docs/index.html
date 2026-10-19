@@ -7,7 +7,7 @@
 <meta name="description" content="skillgram governs the skills your AI agents load: one SKILL.md library, a contract every skill has to pass, provenance with a hash, declared usage, and links into Claude Code, Codex, Cursor, Hermes, Reasonix and any harness that reads skills.">
 <meta name="keywords" content="skill management for AI agents, admin skills, agent skills, skill registry, skill library, SKILL.md, Claude Code skills, Codex, Cursor, Hermes, Reasonix, MCP">
 <link rel="canonical" href="https://xhuk.github.io/skillgram/">
-<meta property="og:title" content="skillgram — skill management for AI agents">
+<meta property="og:title" content="skillgram — skill governance for AI agents">
 <meta property="og:description" content="One skill library, a contract that gates what enters it, and every coding agent reading the same thing. Links instead of copies, plus an MCP server so the agent asks the hub before inventing.">
 <meta property="og:image" content="https://xhuk.github.io/skillgram/logo.png">
 <meta property="og:type" content="website">
@@ -19,7 +19,7 @@
   "name": "skillgram",
   "applicationCategory": "DeveloperApplication",
   "operatingSystem": "Windows, macOS, Linux",
-  "description": "A skill hub and admin layer for AI coding agents: one SKILL.md library on disk, linked into every harness, with per-project scope and an MCP server.",
+  "description": "Skill governance for AI coding agents: one SKILL.md registry, a contract every skill must pass, provenance with a hash, per-project scope and an MCP server.",
   "url": "https://xhuk.github.io/skillgram/",
   "downloadUrl": "https://github.com/Xhuk/skillgram",
   "license": "https://opensource.org/licenses/MIT",
@@ -77,13 +77,13 @@
     </div>
   </header>
 
-  <p>skillgram is a <b>skill hub</b> — a registry of <code>SKILL.md</code> files that lives in one
-  directory on disk — plus the admin layer that keeps every agent pointing at it. Claude Code,
-  Codex, Cursor, Hermes, Reasonix, Gemini CLI, OpenCode, Kiro, Qwen Code, Aider and Copilot all
-  read the same library.</p>
+  <p>skillgram is a <b>registry of <code>SKILL.md</code> files</b> that lives in one directory on
+  disk, plus the layer that governs it: a contract every skill has to pass, provenance for each one,
+  declared usage, and a ledger of what was propagated where. Claude Code, Codex, Cursor, Hermes,
+  Reasonix, Gemini CLI, OpenCode, Kiro, Qwen Code, Aider and Copilot all read the same library.</p>
 
-  <p class="note">Links instead of copies. Per-project scope. An MCP server so the agent can ask
-  the hub. No LLM in the loop unless you ask for one.</p>
+  <p class="note">Links are the mechanism; governance is the product. No LLM in the loop unless
+  you ask for one, and no claim that it can see what an agent reads.</p>
 
   <h2>Install</h2>
 <pre><code>pip install skillgram</code></pre>
@@ -102,7 +102,7 @@ python skillgram.py install             # harness -&gt; hub -&gt; MCP -&gt; proj
     <div class="card"><b>One link per skill</b><span>Each harness gets a junction (or symlink) in its own <code>skills/</code> folder.</span></div>
     <div class="card"><b>Native skills untouched</b><span>A name collision is skipped and reported, never overwritten.</span></div>
     <div class="card"><b>Project scope</b><span><code>use</code> + <code>mount</code> give a repo exactly its set, not the whole library.</span></div>
-    <div class="card"><b>Ask the hub</b><span><code>skillgram mcp</code> exposes search / missing / use / status / propose to the agent.</span></div>
+    <div class="card"><b>Ask the hub</b><span><code>skillgram mcp</code> exposes 7 tools: search, missing, use, status, propose, touch, list.</span></div>
     <div class="card"><b>Declared usage</b><span><code>touch</code> + <code>list --used</code>: what an agent says it used, per project. It never claims to see what it reads.</span></div>
     <div class="card"><b>Idempotent</b><span>Every command prints one JSON line and can run twice without changing anything.</span></div>
   </div>
@@ -122,7 +122,7 @@ python skillgram.py install             # harness -&gt; hub -&gt; MCP -&gt; proj
 
   <footer>
     <span>MIT</span>
-    <span id="version">v1.2.0</span>
+    <a href="https://github.com/Xhuk/skillgram/releases/latest">latest release</a>
     <a href="https://github.com/Xhuk/skillgram/issues/new/choose">Report a bug or ask for a skill</a>
   </footer>
 </main>
