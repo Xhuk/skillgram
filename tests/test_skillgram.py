@@ -338,6 +338,107 @@ class TestPrecedence(HomeCase):
         self.assertFalse(second["configs"][0]["cambiado"])
 
 
+class TestSkillContract(HomeCase):
+    """`lint --contract` is the authoring gate: the five sections are required."""
+
+    FULL = (
+        "## Activation Contract\n\nUse when: a build fails.\n\nNot for: a lint error.\n\n"
+        "## Hard Rules\n\n1. Never skip the test step.\n\n"
+        "## Decision Gates\n\n| Observation | Do this |\n|---|---|\n| red build | read the log |\n\n"
+        "## Execution Steps\n\n1. Run `make build`.\n\n"
+        "## Output Contract\n\nReport: the failing step.\n"
+    )
+
+    def _skill(self, body: str, name: str = "demo") -> Path:
+        d = self.hub_root / "infra-ops" / name
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: Use when a build fails on a native dependency in CI.\n---\n{body}",
+            encoding="utf-8",
+        )
+        return d
+
+    def test_complete_skill_passes_the_contract(self):
+        res = skillgram.lint_skill(self._skill(self.FULL), require_contract=True)
+        self.assertEqual(res["errors"], [])
+        self.assertEqual(res["sections"], list(skillgram.CONTRACT_SECTIONS))
+
+    def test_missing_sections_are_warnings_by_default_and_errors_with_contract(self):
+        d = self._skill("Just a paragraph that says nothing about when to use it.\n\nAnd more.\n")
+        lenient = skillgram.lint_skill(d)
+        self.assertEqual(lenient["errors"], [])
+        self.assertEqual(len(lenient["warnings"]), len(skillgram.CONTRACT_SECTIONS))
+        strict = skillgram.lint_skill(d, require_contract=True)
+        self.assertEqual(len(strict["errors"]), len(skillgram.CONTRACT_SECTIONS))
+
+    def test_empty_section_is_an_error(self):
+        body = self.FULL.replace("Use when: a build fails.\n\nNot for: a lint error.", "")
+        res = skillgram.lint_skill(self._skill(body), require_contract=True)
+        self.assertIn("empty section: ## Activation Contract", res["errors"])
+
+    def test_placeholder_and_live_credential_are_errors(self):
+        todo = skillgram.lint_skill(self._skill(self.FULL + "\nTODO write the rest\n"), require_contract=True)
+        self.assertTrue(any("placeholder" in e for e in todo["errors"]))
+        leaked = skillgram.lint_skill(
+            self._skill(self.FULL + "\nexport STRIPE=sk_live_" + "a1B2c3D4e5F6g7H8i9J0k1L2\n"),
+            require_contract=True,
+        )
+        self.assertTrue(any("live credential" in e for e in leaked["errors"]))
+
+    def test_documentation_placeholders_pass(self):
+        """A `ghp_xxx` example and a PEM banner alone are documentation, not a leak."""
+        body = self.FULL + "\nExample token: ghp_xxxxxxxxxxxxxxxxxxxxxxxx\n-----BEGIN PRIVATE KEY-----\n"
+        res = skillgram.lint_skill(self._skill(body), require_contract=True)
+        self.assertEqual(res["errors"], [])
+
+    def test_short_description_fails(self):
+        d = self.hub_root / "infra-ops" / "tbd"
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text("---\nname: tbd\ndescription: Helps.\n---\n" + self.FULL, encoding="utf-8")
+        res = skillgram.lint_skill(d)
+        self.assertTrue(any("min 20" in e for e in res["errors"]))
+
+    def test_a_bom_is_not_a_missing_frontmatter(self):
+        """Windows editors write a BOM; that must not read as "no frontmatter"."""
+        d = self.hub_root / "infra-ops" / "bommed"
+        d.mkdir(parents=True)
+        body = "---\nname: bommed\ndescription: Use when a Windows editor added a BOM to the file.\n---\n"
+        (d / "SKILL.md").write_bytes(("\ufeff" + body + self.FULL).encode("utf-8"))
+        res = skillgram.lint_skill(d, require_contract=True)
+        self.assertEqual(res["errors"], [])
+
+
+class TestNew(HomeCase):
+    def test_new_scaffolds_the_contract_and_the_sidecar(self):
+        (self.hub_root / "infra-ops").mkdir(parents=True)
+        res = skillgram.new_skill(skillgram.Hub(self.hub_root), "my-skill", category="infra-ops")
+        self.assertTrue(res["ok"], res)
+        d = Path(res["path"])
+        text = (d / "SKILL.md").read_text(encoding="utf-8")
+        for section in skillgram.CONTRACT_SECTIONS:
+            self.assertIn(f"## {section}", text)
+        meta = json.loads((d / skillgram.SKILL_META).read_text(encoding="utf-8"))
+        self.assertEqual(meta["by"], "human")
+        self.assertEqual(meta["source"]["kind"], "authored")
+        self.assertIn("hash", meta)
+
+    def test_the_scaffold_fails_the_gate_until_it_is_filled(self):
+        (self.hub_root / "infra-ops").mkdir(parents=True)
+        res = skillgram.new_skill(skillgram.Hub(self.hub_root), "my-skill", category="infra-ops")
+        gate = skillgram.lint_skill(Path(res["path"]), require_contract=True)
+        self.assertTrue(any("placeholder" in e for e in gate["errors"]))
+
+    def test_new_refuses_duplicates_and_bad_input(self):
+        (self.hub_root / "infra-ops").mkdir(parents=True)
+        hub = skillgram.Hub(self.hub_root)
+        self.assertTrue(skillgram.new_skill(hub, "dup", category="infra-ops")["ok"])
+        again = skillgram.new_skill(hub, "dup", category="infra-ops")
+        self.assertFalse(again["ok"])
+        self.assertIn("already exists", again["error"])
+        self.assertIn("kebab-case", skillgram.new_skill(hub, "Not A Slug")["error"])
+        self.assertIn("unknown category", skillgram.new_skill(hub, "x", category="nope")["error"])
+
+
 class TestBootstrap(HomeCase):
     def test_signals_from_files(self):
         proj = self.tmp / "app"

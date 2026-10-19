@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skillgram"
-version = "1.2.2"
+version = "1.3.0"
 description = "Skill management for AI agents: one SKILL.md library (a skill hub and registry) linked into Claude Code, Codex, Cursor, Hermes, Reasonix and any harness that reads skills. No copies, no drift."
 readme = "README.pypi.md"
 requires-python = ">=3.9"

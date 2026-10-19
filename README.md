@@ -231,15 +231,33 @@ and the skill that walks an agent through them:
 | `review` / `pin` / `retire` | lifecycle. |
 | `export` / `import` / `diff` / `git` | move a hub around. |
 | `mcp` | stdio MCP server (`--read-only`). |
-| `lint` | quality gate: frontmatter, name, description, size. |
+| `lint` | quality gate: frontmatter, the five contract sections, credentials, placeholders. `--contract` makes the sections mandatory. |
+| `new` | scaffold a skill from the contract (`SKILL.md` + `SKILLMETA.json`); `lint` decides whether it ships. |
 | `watch` / `daemon` / `install-autostart` | keep it in sync by itself. |
 
-`skillgram --help` lists all of them (33); `skillgram <command> --help` is the contract for
+`skillgram --help` lists all of them (34); `skillgram <command> --help` is the contract for
 one. Every command prints **exactly one JSON line** on stdout (`--json` for the human ones too).
 Exit code `0` healthy, `1` drift/error, `2` bad invocation.
 
+## Authoring a skill: one contract, one gate (1.3)
+
+Three doors, the same gate — `lint`. The normative text is
+[docs/SKILL-CONTRACT.md](docs/SKILL-CONTRACT.md).
+
+```bash
+skillgram new my-skill --category infra-ops   # scaffold + SKILLMETA.json, does not publish
+skillgram lint my-skill --contract            # fails while a TODO is left
+skillgram propose "<need>" --apply            # the LLM drafts it; the same gate checks it
+skillgram lint --contract --strict            # the whole hub, warnings included (what CI should run)
+```
+
+Every authored skill declares the same five sections — *Activation Contract* (when it applies and
+when it does not), *Hard Rules*, *Decision Gates*, *Execution Steps*, *Output Contract* — and
+carries a `SKILLMETA.json` with who wrote it, when, and the content hash. Without that hash there
+is no `update` later, only overwrite.
+
 ```json
-{"ok":true,"op":"status","version":"1.2.0","hub":"C:\\Users\\me\\.agents\\skills","skills":842,"categories":18,"nested":12,"agents":50,"drift":0,"watching":false,"missing":0,"mispointed":0,"dead":0,"skipped":2}
+{"ok":true,"op":"status","version":"1.3.0","hub":"C:\\Users\\me\\.agents\\skills","skills":842,"categories":18,"nested":12,"agents":50,"drift":0,"watching":false,"missing":0,"mispointed":0,"dead":0,"skipped":2}
 ```
 
 ## Known gaps (documented, not implemented)
@@ -300,6 +318,7 @@ is cheap, respect is not.
 | what changed, version by version | [CHANGELOG.md](CHANGELOG.md) |
 | the install flow as a diagram | [docs/diagrams/skillgram-install.html](docs/diagrams/skillgram-install.html) |
 | the rules this repo holds itself to | [AGENTS.md](AGENTS.md) |
+| what a skill must contain | [docs/SKILL-CONTRACT.md](docs/SKILL-CONTRACT.md) |
 | how to report something | [skills/skillgram-report](skills/skillgram-report/SKILL.md) |
 
 ## Tests

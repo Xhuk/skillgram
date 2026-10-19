@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.3.0 — the skill contract, and a gate that actually checks it
+
+`propose` asked the model for five sections; `lint` verified **none** of them. A skill could be
+written by hand with no trigger, no rules and no output, and pass the gate. Now there is one
+normative text and one gate for all three ways a skill can arrive.
+
+- **`docs/SKILL-CONTRACT.md`** — frontmatter rules, the five sections in order (Activation
+  Contract, Hard Rules, Decision Gates, Execution Steps, Output Contract), the prohibitions
+  (credentials, `TODO`/`TBD`/`FIXME`, name conflicts) and the provenance sidecar.
+- **`lint --contract`** enforces it: a missing section is an error, an empty section is an error,
+  a scaffold that still says TODO is an error. Without the flag those sections are warnings, so
+  the hub reports its debt instead of failing wholesale.
+- **`skillgram new <name> --category <c>`** scaffolds the contract into the hub and writes
+  `SKILLMETA.json` (`by`, `added_at`, `hash`, `source.kind`). It does not publish: `lint` decides.
+- **`propose --apply` now runs the strict form of the gate** and rolls the skill back if the
+  model's draft ignores the contract. Its `SKILLMETA.json` carries the same hash and `by:
+  llm:<model>`.
+- **`lint` catches more, without guessing**: `description` under 20 chars is an error (say *when*
+  it applies), `TODO/TBD/FIXME` is an error, and live-looking credentials are errors — with
+  narrow patterns, so a `ghp_xxx` placeholder or a PEM banner alone still pass. A local absolute
+  path is a warning (portability). A UTF-8 BOM from a Windows editor no longer reads as "no
+  frontmatter".
+- The protocol block that `mount` injects now names both doors: author with `new`, import with
+  `add` (coming), and `lint` is the gate.
+
+**The hub's own debt, measured with the new gate** (843 skills): 817 have at least one error —
+4,063 missing sections, 36 descriptions of one or two characters, 24 leftovers of
+`TODO`/`FIXME`/`TBD`, 4 skills with no usable frontmatter — and 649 have warnings (52 mention a
+`scripts/` folder that does not exist, 24 hard-code a local absolute path). That is the backlog
+the contract makes visible; it is not fixed by this release.
+
+88 stdlib tests.
+
 ## 1.2.2 — the hub is not an agent, and precedence stops duplicating itself
 
 Three defects that only appear on a machine with a real hub:

@@ -77,7 +77,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "1.2.2"
+VERSION = "1.3.0"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto
@@ -1963,14 +1963,19 @@ def propose_skill(hub: Hub, project: Path, need: str, cfg: dict | None, apply: b
     dest = hub.root / tipo / name
     dest.mkdir(parents=True, exist_ok=True)
     (dest / "SKILL.md").write_text(draft if draft.endswith("\n") else draft + "\n", encoding="utf-8")
-    gate = lint_skill(dest)
+    # the authoring gate: the five sections of docs/SKILL-CONTRACT.md are required,
+    # not optional advice in a prompt
+    gate = lint_skill(dest, require_contract=True)
     desc_long = any("description is" in w for w in gate["warnings"])
     if gate["errors"] or desc_long:
         shutil.rmtree(dest, ignore_errors=True)
         return {"ok": False, "op": "propose", "skill": name, "error": "draft failed lint: " + "; ".join(gate["errors"]),
                 "lint": gate}
     write_skill_meta(dest, {"flavor": GENERIC_FLAVOR, "by": f"llm:{cfg['model']}",
-                            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
+                            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                            "added_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                            "hash": skill_hash(dest),
+                            "source": {"kind": "authored"}})
     res = promote(hub, [name], project)
     manifest = _read_manifest(project)
     entry = manifest["skills"].get(name)
@@ -2307,10 +2312,38 @@ def mcp_serve(hub: Hub, stdin=None, stdout=None, read_only: bool = False) -> int
 MAX_DESCRIPTION = 140
 MAX_BODY_LINES = 400
 MIN_BODY_LINES = 6
+MIN_DESCRIPTION = 20
+
+# The five sections every authored skill declares (docs/SKILL-CONTRACT.md).
+CONTRACT_SECTIONS = (
+    "Activation Contract",
+    "Hard Rules",
+    "Decision Gates",
+    "Execution Steps",
+    "Output Contract",
+)
+
+# Narrow on purpose: these match a live credential, not the placeholders and
+# banner strings that documentation legitimately contains (a bare `ghp_xxx`, a
+# PEM header with no body, a JWT header fragment).
+SECRET_PATTERNS = (
+    ("stripe live key", r"sk_live_[A-Za-z0-9]{20,}"),
+    ("pypi token", r"pypi-AgEI[A-Za-z0-9_-]{30,}"),
+    ("github fine-grained token", r"github_pat_[A-Za-z0-9_]{40,}"),
+    ("github token", r"ghp_[A-Za-z0-9]{30,}"),
+    ("aws access key", r"\bAKIA[0-9A-Z]{16}\b"),
+    ("private key", r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]{0,40}?[A-Za-z0-9+/]{100,}"),
+    ("slack token", r"xox[baprs]-[0-9A-Za-z-]{20,}"),
+    ("jwt", r"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\."),
+)
+
+PLACEHOLDERS = ("TODO", "TBD", "FIXME", "XXX-PLACEHOLDER")
+LOCAL_PATH = re.compile(r"C:\\Users|C:/Users|/home/[A-Za-z0-9._-]+/|/Users/[A-Za-z0-9._-]+/")
 
 
 def _frontmatter(text: str) -> dict:
     """Parseo minimo del frontmatter YAML (clave: valor de una linea)."""
+    text = text.lstrip("\ufeff")  # a BOM from a Windows editor is not "no frontmatter"
     out = {}
     if not text.startswith("---"):
         return out
@@ -2323,13 +2356,36 @@ def _frontmatter(text: str) -> dict:
     return out
 
 
-def lint_skill(skill_dir: Path) -> dict:
-    """Errores duros y avisos de una skill."""
+def _sections(text: str) -> dict:
+    """{titulo de nivel 2: cuerpo}. Un titulo sin cuerpo queda como cadena vacia."""
+    out: dict = {}
+    current, buf = None, []
+    for line in text.splitlines():
+        if line.startswith("## "):
+            if current is not None:
+                out[current] = "\n".join(buf).strip()
+            current, buf = line[3:].strip(), []
+        elif current is not None:
+            buf.append(line)
+    if current is not None:
+        out[current] = "\n".join(buf).strip()
+    return out
+
+
+def lint_skill(skill_dir: Path, require_contract: bool = False) -> dict:
+    """Errores duros y avisos de una skill.
+
+    `require_contract` is the authoring gate: the five sections of
+    docs/SKILL-CONTRACT.md become errors, not warnings. The hub's existing 843
+    skills are linted without it so `lint` reports the debt instead of failing
+    wholesale; `propose` and `new` publish through the strict form.
+    """
     errors, warnings = [], []
     path = skill_dir / "SKILL.md"
     if not path.is_file():
         return {"skill": skill_dir.name, "errors": ["missing SKILL.md"], "warnings": []}
     text = path.read_text(encoding="utf-8", errors="replace")
+    text = text.lstrip("\ufeff")
     fm = _frontmatter(text)
     if not fm:
         errors.append("missing frontmatter")
@@ -2338,7 +2394,8 @@ def lint_skill(skill_dir: Path) -> dict:
         errors.append("frontmatter has no `name`")
     else:
         if name != skill_dir.name:
-            warnings.append(f"name `{name}` != folder `{skill_dir.name}`")
+            message = f"name `{name}` != folder `{skill_dir.name}`"
+            (errors if require_contract else warnings).append(message)
         if name != name.lower() or " " in name or "_" in name:
             errors.append("name must be kebab-case")
     desc = fm.get("description", "")
@@ -2346,6 +2403,8 @@ def lint_skill(skill_dir: Path) -> dict:
         errors.append("frontmatter has no `description`")
     elif len(desc) > MAX_DESCRIPTION:
         warnings.append(f"description is {len(desc)} chars (max {MAX_DESCRIPTION})")
+    elif len(desc) < MIN_DESCRIPTION:
+        errors.append(f"description is {len(desc)} chars (min {MIN_DESCRIPTION}): say when the skill applies")
     body_lines = [ln for ln in text.splitlines() if ln.strip()]
     if len(body_lines) < MIN_BODY_LINES:
         errors.append(f"body has {len(body_lines)} non-empty lines (min {MIN_BODY_LINES})")
@@ -2356,11 +2415,29 @@ def lint_skill(skill_dir: Path) -> dict:
             d = skill_dir / ref.strip("/")
             if not d.is_dir():
                 warnings.append(f"mentions {ref} but the folder does not exist")
-    return {"skill": skill_dir.name, "errors": errors, "warnings": warnings}
+
+    sections = _sections(text)
+    for wanted in CONTRACT_SECTIONS:
+        if wanted not in sections:
+            message = f"missing section: ## {wanted}"
+            (errors if require_contract else warnings).append(message)
+        elif not sections[wanted]:
+            errors.append(f"empty section: ## {wanted}")
+
+    for label, pattern in SECRET_PATTERNS:
+        if re.search(pattern, text):
+            errors.append(f"looks like a live credential ({label})")
+    for word in PLACEHOLDERS:
+        if word in text:
+            errors.append(f"placeholder left in the text ({word})")
+    if LOCAL_PATH.search(text):
+        warnings.append("mentions a local absolute path (the skill stops being portable)")
+    return {"skill": skill_dir.name, "errors": errors, "warnings": warnings,
+            "sections": [s for s in CONTRACT_SECTIONS if s in sections]}
 
 
-def lint_hub(hub: Hub, only: str | None = None, strict: bool = False) -> dict:
-    """Lint de una skill o de todo el hub."""
+def lint_hub(hub: Hub, only: str | None = None, strict: bool = False, contract: bool = False) -> dict:
+    """Lint de una skill o de todo el hub. `contract` exige las cinco secciones."""
     names = [only] if only else sorted(hub.skills())
     known = hub.skills()
     rows = []
@@ -2369,7 +2446,7 @@ def lint_hub(hub: Hub, only: str | None = None, strict: bool = False) -> dict:
         if not tipo:
             rows.append({"skill": name, "errors": ["not found in the hub"], "warnings": []})
             continue
-        rows.append(lint_skill(hub.root / tipo / name))
+        rows.append(lint_skill(hub.root / tipo / name, require_contract=contract))
     with_errors = [r for r in rows if r["errors"]]
     with_warnings = [r for r in rows if r["warnings"]]
     failing = bool(with_errors) or (strict and bool(with_warnings))
@@ -2377,10 +2454,88 @@ def lint_hub(hub: Hub, only: str | None = None, strict: bool = False) -> dict:
         "ok": not failing,
         "op": "lint",
         "strict": strict,
+        "contract": contract,
         "skills": len(rows),
         "errors": with_errors,
         "warnings": with_warnings,
         "detail": rows if only else [],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Authoring: scaffold del contrato (docs/SKILL-CONTRACT.md)
+# ---------------------------------------------------------------------------
+#
+# `new` no publica nada: escribe el esqueleto y la provenance, y el que decide
+# si sirve es `lint --contract` (que es tambien el gate de `propose` y de
+# `add`). Una sola puerta, tres entradas: new (authorear), propose (LLM),
+# add (importar de un repo).
+
+SCAFFOLD = """---
+name: {name}
+description: TODO una frase que diga CUANDO se usa esta skill (max 140 chars)
+---
+
+# {name}
+
+## Activation Contract
+
+Use when: TODO. (Una condicion concreta: un comando, un error, una decision.)
+
+Not for: TODO. (El caso vecino que alguien confundiria con este.)
+
+## Hard Rules
+
+1. TODO una regla verificable (no un deseo).
+
+## Decision Gates
+
+| Observation | Do this |
+|---|---|
+| TODO | TODO |
+
+## Execution Steps
+
+1. TODO el comando exacto, con las rutas que de verdad existen.
+
+## Output Contract
+
+Report: TODO que tiene que devolver el agente (campos, no prosa).
+"""
+
+
+def new_skill(hub: Hub, name: str, category: str | None = None, author: str = "human") -> dict:
+    """Crea el esqueleto de una skill nueva. No la publica: eso lo decide `lint`."""
+    slug = (name or "").strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug):
+        return {"ok": False, "op": "new", "error": "name must be kebab-case (a-z, 0-9 and - only)"}
+    tipos = hub.tipos()
+    cat = (category or "imported").strip()
+    # a category counts if it already holds skills OR its folder exists: the first
+    # skill of a fresh category is exactly the case `new --category` is for
+    if cat != DEFAULT_CATEGORY and cat not in tipos and not (hub.root / cat).is_dir():
+        return {"ok": False, "op": "new",
+                "error": f"unknown category `{cat}`; existing: {', '.join(tipos) or '(none)'}"}
+    dest = hub.root / cat / slug
+    if (dest / "SKILL.md").exists():
+        return {"ok": False, "op": "new", "error": f"already exists: {dest}"}
+    if slug in hub.skills():
+        return {"ok": False, "op": "new", "error": f"a skill named `{slug}` already exists in another category"}
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / "SKILL.md").write_text(SCAFFOLD.format(name=slug), encoding="utf-8")
+    write_skill_meta(dest, {
+        "by": author,
+        "added_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "hash": skill_hash(dest),
+        "source": {"kind": "authored"},
+    })
+    return {
+        "ok": True,
+        "op": "new",
+        "skill": slug,
+        "category": cat,
+        "path": str(dest),
+        "next": f"fill the TODOs, then `skillgram lint {slug} --contract` (it fails until they are gone)",
     }
 
 
@@ -2406,6 +2561,10 @@ def protocol_block(hub: Hub) -> str:
         "   then offer `skillgram propose \"<need>\"` (draft) and wait for approval before `--apply`.",
         "4. Never hand-write files under `.agents/skills/`: use `skillgram use <skill>...`.",
         "5. Adding a skill to this project is `skillgram use`, not a copy.",
+        "6. Authoring a skill: `skillgram new <name> --category <c>` then `skillgram lint <name>",
+        "   --contract`. The contract is `docs/SKILL-CONTRACT.md`; `lint` is the gate.",
+        "7. A skill that comes from a link or repo is `skillgram add <url>`, never a `git clone`",
+        "   into a `skills/` folder.",
         "",
         PROTOCOL_END,
     ])
@@ -3572,6 +3731,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_lint = sub.add_parser("lint", parents=[common], help="quality gate: frontmatter, name, description, body size")
     p_lint.add_argument("skill", nargs="?", help="one skill (default: the whole hub)")
     p_lint.add_argument("--strict", action="store_true", help="warnings also fail")
+    p_lint.add_argument("--contract", action="store_true",
+                        help="require the five sections of docs/SKILL-CONTRACT.md")
+    p_new = sub.add_parser("new", parents=[common], help="scaffold a skill from the contract (does not publish)")
+    p_new.add_argument("name", help="kebab-case name; it becomes the folder")
+    p_new.add_argument("--category", help="existing hub category (default: imported)")
+    p_new.add_argument("--by", default="human", help="who authors it (default: human)")
     p_dem = sub.add_parser("demand", parents=[common], help="queries the hub could not cover (real roadmap)")
     p_dem.add_argument("--limit", type=int, default=20)
     p_git = sub.add_parser("git", parents=[common], help="hub as a git repo: status | init | pull | push")
@@ -3634,8 +3799,10 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "precedence":
         result = apply_precedence(hub, apply=args.apply,
                                   only=normalize_harness(args.harness) if args.harness else None)
+    elif args.cmd == "new":
+        result = new_skill(hub, args.name, category=args.category, author=args.by)
     elif args.cmd == "lint":
-        result = lint_hub(hub, only=args.skill, strict=args.strict)
+        result = lint_hub(hub, only=args.skill, strict=args.strict, contract=args.contract)
     elif args.cmd == "diff":
         result = diff_skill(hub, args.skill, Path(args.against))
     elif args.cmd == "demand":
@@ -3844,8 +4011,10 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "precedence":
         result = apply_precedence(hub, apply=args.apply,
                                   only=normalize_harness(args.harness) if args.harness else None)
+    elif args.cmd == "new":
+        result = new_skill(hub, args.name, category=args.category, author=args.by)
     elif args.cmd == "lint":
-        result = lint_hub(hub, only=args.skill, strict=args.strict)
+        result = lint_hub(hub, only=args.skill, strict=args.strict, contract=args.contract)
     elif args.cmd == "diff":
         result = diff_skill(hub, args.skill, Path(args.against))
     elif args.cmd == "demand":
