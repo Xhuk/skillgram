@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.2.2 — the hub is not an agent, and precedence stops duplicating itself
+
+Three defects that only appear on a machine with a real hub:
+
+- **`sync` was linking the hub into itself.** `Hub.agents()` returned `~/.agents/skills`
+  because it matches the `~/.*/skills` sweep, so the hub received one junction per skill —
+  842 on this machine, each pointing at the category folder one level down. A junction is
+  not a symlink, so git materialised them as copies of the hub inside the hub: that is why
+  the hub repo could never take a first commit. The hub is now excluded by resolved path.
+  Measured after: 842 links removed, `sync` creates 0, 843 skills and drift 0 unchanged,
+  agents 50 → 49 (the hub was never an agent).
+- **`precedence` touched every harness.** Asking for Hermes also edited Reasonix's
+  `config.toml`. New `--harness` flag and `apply_precedence(..., only=...)`.
+- **`precedence` duplicated the same path.** The comparison was a raw string match, so a hub
+  already listed as `C:/Users/me/.agents/skills` got a second entry
+  `C:\Users\me\.agents\skills` — the same root twice in one config, which is one skill loaded
+  twice. Paths are normalised (separator and case) for YAML `external_dirs` and TOML `paths`.
+
+78 stdlib tests, CI green on Python 3.9 / 3.11 / 3.13.
+
 ## 1.2.1 — the PyPI page stops contradicting itself
 
 The 1.2.0 upload was built from the README *before* the `pip install` fix, so the project page on
