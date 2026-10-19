@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """skillgram - one skill hub, linked into every agent; project scope on demand.
 
 What it is
@@ -1790,9 +1790,11 @@ def repo_signals(project: Path) -> dict:
     return {"files": sorted(set(files)), "deps": deps, "tags": sorted(t for t in tags if len(t) > 2)}
 
 
-def candidate_skills(hub: Hub, signals: dict, limit: int = 60) -> list:
-    """Filtro determinista del catalogo: 900 -> ~60 candidates."""
-    toks = signals["tags"]
+def rank_skills(hub: Hub, tokens: list, limit: int | None = None) -> list:
+    """Scoring determinista del catalogo: cuantos tokens aparecen en el nombre, el
+    tipo o la cabeza del SKILL.md. Devuelve (skill, tipo, score, cabeza) ya ordenado.
+    `bootstrap` y `missing` solo cambian lo que publican de cada fila.
+    """
     rows = []
     for name, tipo in hub.skills().items():
         try:
@@ -1800,11 +1802,19 @@ def candidate_skills(hub: Hub, signals: dict, limit: int = 60) -> list:
         except OSError:
             head = ""
         hay = f"{name} {tipo} {head}".lower()
-        score = sum(1 for t in toks if t in hay)
+        score = sum(1 for t in tokens if t in hay)
         if score:
-            rows.append({"skill": name, "tipo": tipo, "score": score, "summary": head[:280].replace("\n", " ")})
-    rows.sort(key=lambda r: (-r["score"], r["skill"]))
-    return rows[:limit]
+            rows.append((name, tipo, score, head))
+    rows.sort(key=lambda r: (-r[2], r[0]))
+    return rows if limit is None else rows[:limit]
+
+
+def candidate_skills(hub: Hub, signals: dict, limit: int = 60) -> list:
+    """Filtro determinista del catalogo: 900 -> ~60 candidates."""
+    return [
+        {"skill": name, "tipo": tipo, "score": score, "summary": head[:280].replace("\n", " ")}
+        for name, tipo, score, head in rank_skills(hub, signals["tags"], limit)
+    ]
 
 
 def llm_select(cfg: dict, project: Path, signals: dict, candidates: list) -> dict:
@@ -1882,26 +1892,18 @@ def bootstrap(hub: Hub, project: Path, cfg: dict | None, apply: bool = False) ->
 def missing(hub: Hub, text: str, limit: int = 8) -> dict:
     """Consulta determinista: hay skill para esto? (sin LLM)."""
     toks = [t for t in re_findall_words(text) if len(t) > 2]
-    rows = []
-    for name, tipo in hub.skills().items():
-        try:
-            head = (hub.root / tipo / name / "SKILL.md").read_text(encoding="utf-8", errors="replace")[:1200]
-        except OSError:
-            head = ""
-        hay = f"{name} {tipo} {head}".lower()
-        score = sum(1 for t in toks if t in hay)
-        if score:
-            rows.append({"skill": name, "tipo": tipo, "score": score})
-    rows.sort(key=lambda r: (-r["score"], r["skill"]))
-    found = bool(rows and rows[0]["score"] >= 2)
-    best = rows[0]["skill"] if rows else ""
-    record_demand(text, found, best=best, hits=len(rows))
+    ranked = rank_skills(hub, toks)
+    found = bool(ranked and ranked[0][2] >= 2)
+    best = ranked[0][0] if ranked else ""
+    record_demand(text, found, best=best, hits=len(ranked))
     return {
         "ok": True,
         "op": "missing",
         "query": text,
         "found": found,
-        "candidates": rows[:limit],
+        "candidates": [
+            {"skill": name, "tipo": tipo, "score": score} for name, tipo, score, _ in ranked[:limit]
+        ],
     }
 
 
@@ -3858,162 +3860,226 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    hub = Hub(Path(args.hub))
+def _mount_bootstrap(hub: Hub, root: Path, args, result: dict) -> dict | None:
+    """Repo sin scope: ofrece bootstrapear y, si el set se aplico, re-monta.
 
-    if args.cmd == "status":
-        result = status(hub, deep=bool(getattr(args, "verify", False)))
-    elif args.cmd == "flavor":
-        result = flavor_scan(hub, apply=args.apply)
-    elif args.cmd == "port":
+    Devuelve el resultado nuevo, o None para quedarse con el original (solo se
+    anoto la pista o no se aplico nada). La confirmacion es interactiva salvo
+    --bootstrap/--yes, y sin LLM solo se explica el paso siguiente.
+    """
+    cfg = llm_config()
+    if not cfg:
+        result["bootstrap_hint"] = "no LLM configured: run `skillgram use <skill>...` in this repo"
+        return None
+    if not args.apply:
+        return None
+    want = args.bootstrap is True or bool(args.yes)
+    if not want and sys.stdin.isatty() and not args.json:
+        ans = ""
+        try:
+            ans = input(f"no skills in scope for {root.name}; bootstrap it now? [y/N]: ")
+        except (EOFError, OSError):
+            ans = ""
+        want = ans.strip().lower().startswith("y")
+    if not want:
+        return None
+    result["bootstrap"] = bootstrap(hub, root, cfg, apply=True)
+    if not result["bootstrap"].get("applied"):
+        return None
+    again = mount_project(hub, root, apply=True, prune_global=args.prune_global)
+    again["bootstrap"] = "done"
+    return again
+
+
+def _onboard(hub: Hub, args) -> dict | int:
+    """onboard: sin --scope pregunta, sin --apply solo devuelve el plan.
+
+    Un int es una salida temprana con su codigo (invocacion mala), igual que en
+    `dispatch`.
+    """
+    scope = args.scope
+    if not scope:
+        ans = ""
+        try:
+            if sys.stdin.isatty() and not args.json:
+                ans = input("Unificar TODOS los harnesss o solo el actual? [all/current] (all): ")
+        except (EOFError, OSError):
+            ans = ""
+        scope = "current" if ans.strip().lower().startswith("c") else "all"
+    harness = args.harness or os.environ.get("SKILLGRAM_HARNESS")
+    if scope == "current" and not harness:
+        print(json.dumps({"ok": False, "error": "scope=current requires --harness or SKILLGRAM_HARNESS"}), flush=True)
+        return 2
+    plan = onboard(hub, scope=scope, harness=harness, use_llm=not args.no_llm)
+    if args.plan:
+        Path(args.plan).write_text(json.dumps(plan, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    if not args.apply:
+        return plan
+    applied = apply_onboard(hub, plan)
+    replaced = {"quarantine": [], "links": [], "failures": []}
+    if args.replace_natives and applied["imported"]:
+        replaced = replace_native_with_link(
+            hub, applied["imported"], HOME / ".agents" / "skillgram-quarantine"
+        )
+    linked = sync(hub, quiet=True)
+    return {
+        **plan,
+        "applied": applied,
+        "reemplazo": replaced,
+        "sync": linked,
+        "ok": not applied["failed"] and not replaced["failures"],
+    }
+
+
+def dispatch(args, hub: Hub) -> dict | int:
+    """Corre un comando y devuelve su resultado.
+
+    Un int significa que el comando ya hizo su propia I/O (mcp, watch, daemon) y
+    `main` no imprime nada mas. Hay UNA sola cadena de decision: el texto humano
+    vive en `human_output` y solo lee el dict que sale de aca, asi que un comando
+    no puede ejecutarse dos veces.
+    """
+    cmd = args.cmd
+
+    if cmd == "status":
+        return status(hub, deep=args.verify)
+
+    if cmd == "flavor":
+        return flavor_scan(hub, apply=args.apply)
+
+    if cmd == "port":
         cfg = None if args.no_llm else llm_config()
-        if args.skill:
-            result = port_skill(hub, args.skill, args.to or "", cfg) if args.to else {
-                "ok": False, "op": "port", "error": "--to <harness> es obligatorio para una skill puntual"}
-        else:
-            targets = [args.to] if args.to else [
-                h["app"] for h in detect_harnesses() if h["skills_dir"]]
-            result = port_missing(hub, targets, cfg, apply=args.apply)
-    elif args.cmd == "precedence":
-        result = apply_precedence(hub, apply=args.apply,
-                                  only=normalize_harness(args.harness) if args.harness else None)
-    elif args.cmd == "list":
+        if not args.skill:
+            targets = [args.to] if args.to else [h["app"] for h in detect_harnesses() if h["skills_dir"]]
+            return port_missing(hub, targets, cfg, apply=args.apply)
+        if not args.to:
+            return {"ok": False, "op": "port", "error": "--to <harness> is required for a single skill"}
+        return port_skill(hub, args.skill, args.to, cfg)
+
+    if cmd == "precedence":
+        return apply_precedence(hub, apply=args.apply,
+                                only=normalize_harness(args.harness) if args.harness else None)
+
+    if cmd == "list":
         proj = resolve_project(args.project) if args.project else None
-        result = list_skills(hub, category=args.category,
-                             project=Path(proj["path"]) if proj else None,
-                             used=args.used, limit=args.limit)
-    elif args.cmd == "touch":
+        return list_skills(hub, category=args.category,
+                           project=Path(proj["path"]) if proj else None,
+                           used=args.used, limit=args.limit)
+
+    if cmd == "touch":
         proj = resolve_project(args.project)
         result = touch_usage(Path(proj["path"]), args.skills, by=args.by)
         result["project"] = str(proj["path"])
-    elif args.cmd == "new":
-        result = new_skill(hub, args.name, category=args.category, author=args.by)
-    elif args.cmd == "lint":
-        result = lint_hub(hub, only=args.skill, strict=args.strict, contract=args.contract)
-    elif args.cmd == "diff":
-        result = diff_skill(hub, args.skill, Path(args.against))
-    elif args.cmd == "demand":
-        result = demand_report(limit=args.limit)
-    elif args.cmd == "git":
-        result = hub_git(hub, action=args.action, apply=args.apply)
-    elif args.cmd == "index":
-        result = index_build(hub)
-    elif args.cmd == "search":
-        result = index_search(" ".join(args.text), limit=args.limit)
-    elif args.cmd == "review":
+        return result
+
+    if cmd == "new":
+        return new_skill(hub, args.name, category=args.category, author=args.by)
+
+    if cmd == "lint":
+        return lint_hub(hub, only=args.skill, strict=args.strict, contract=args.contract)
+
+    if cmd == "diff":
+        return diff_skill(hub, args.skill, Path(args.against))
+
+    if cmd == "demand":
+        return demand_report(limit=args.limit)
+
+    if cmd == "git":
+        return hub_git(hub, action=args.action, apply=args.apply)
+
+    if cmd == "index":
+        return index_build(hub)
+
+    if cmd == "search":
+        return index_search(" ".join(args.text), limit=args.limit)
+
+    if cmd == "review":
         proj = resolve_project(args.project)
-        result = review_list(hub, Path(proj["path"]), days=args.days, fail_if_stale=args.fail_if_stale)
-    elif args.cmd == "pin":
+        return review_list(hub, Path(proj["path"]), days=args.days, fail_if_stale=args.fail_if_stale)
+
+    if cmd == "pin":
         proj = resolve_project(args.project)
-        result = pin_skill(Path(proj["path"]), args.skills, pinned=not args.unpin)
-    elif args.cmd == "retire":
+        return pin_skill(Path(proj["path"]), args.skills, pinned=not args.unpin)
+
+    if cmd == "retire":
         result = retire_skill(hub, args.skill, reason=args.reason)
         if result.get("ok"):
             result["sync"] = sync(hub, quiet=True)
-    elif args.cmd == "export":
-        result = export_hub(hub, Path(args.file))
-    elif args.cmd == "import":
-        result = import_hub(hub, Path(args.file), apply=args.apply)
-    elif args.cmd == "mcp":
+        return result
+
+    if cmd == "export":
+        return export_hub(hub, Path(args.file))
+
+    if cmd == "import":
+        return import_hub(hub, Path(args.file), apply=args.apply)
+
+    if cmd == "mcp":
         return mcp_serve(hub, read_only=args.read_only)
-    elif args.cmd == "bootstrap":
+
+    if cmd == "bootstrap":
         proj = resolve_project(args.project)
         cfg = None if args.no_llm else llm_config()
         result = bootstrap(hub, Path(proj["path"]), cfg, apply=args.apply)
         result["resolucion"] = proj["source"]
-    elif args.cmd == "missing":
+        return result
+
+    if cmd == "missing":
         proj = resolve_project(args.project)
         result = missing(hub, " ".join(args.text))
         result["project"] = str(proj["path"])
-    elif args.cmd == "propose":
+        return result
+
+    if cmd == "propose":
         proj = resolve_project(args.project)
         cfg = None if args.no_llm else llm_config()
         result = propose_skill(hub, Path(proj["path"]), " ".join(args.need), cfg, apply=args.apply)
         result["resolucion"] = proj["source"]
-    elif args.cmd == "mount":
+        return result
+
+    if cmd == "mount":
         proj = resolve_project(args.project)
         root = Path(proj["path"])
         result = mount_project(hub, root, apply=args.apply, prune_global=args.prune_global)
         if not result.get("ok") and args.bootstrap is not False:
-            cfg = llm_config()
-            want = args.bootstrap is True or bool(args.yes)
-            if cfg and args.apply and not want:
-                ans = ""
-                try:
-                    if sys.stdin.isatty() and not getattr(args, "json", False):
-                        ans = input(f"no skills in scope for {root.name}; bootstrap it now? [y/N]: ")
-                except (EOFError, OSError):
-                    ans = ""
-                want = ans.strip().lower().startswith("y")
-            if cfg and args.apply and want:
-                result["bootstrap"] = bootstrap(hub, root, cfg, apply=True)
-                if result["bootstrap"].get("applied"):
-                    result = mount_project(hub, root, apply=True, prune_global=args.prune_global)
-                    result["bootstrap"] = "done"
-            elif not cfg:
-                result["bootstrap_hint"] = "no LLM configured: run `skillgram use <skill>...` in this repo"
-        if result.get("ok") and args.apply and not getattr(args, "no_protocol", False):
+            booted = _mount_bootstrap(hub, root, args, result)
+            if booted is not None:
+                result = booted
+        if result.get("ok") and args.apply and not args.no_protocol:
             result["protocol"] = inject_protocol(hub, root, apply=True)
         result["resolucion"] = proj["source"]
-        result["resolucion"] = proj["source"]
-    elif args.cmd == "adopt":
+        return result
+
+    if cmd == "adopt":
         if args.all:
-            result = adopt_natives(hub)
-        elif args.path:
-            result = adopt_skill(hub, Path(args.path))
-        else:
-            result = {"ok": False, "op": "adopt", "error": "pasame una carpeta o --all"}
-    elif args.cmd == "install":
-        result = install(hub, harness=args.harness, root=args.root, apply=not args.dry_run,
-                         bootstrap_repos=args.bootstrap_repos, depth=args.depth)
-    elif args.cmd == "propagate":
-        result = propagate(hub, harness=args.harness, root=args.root, apply=args.apply,
-                           depth=args.depth, force=args.force, bootstrap_repos=args.bootstrap_repos)
-    elif args.cmd == "doctor":
-        result = doctor(hub)
-    elif args.cmd == "onboard":
-        scope = args.scope
-        if not scope:
-            ans = ""
-            try:
-                if sys.stdin.isatty() and not getattr(args, "json", False):
-                    ans = input("Unificar TODOS los harnesss o solo el actual? [all/current] (all): ")
-            except (EOFError, OSError):
-                ans = ""
-            scope = "current" if ans.strip().lower().startswith("c") else "all"
-        harness = args.harness or os.environ.get("SKILLGRAM_HARNESS")
-        if scope == "current" and not harness:
-            print(json.dumps({"ok": False, "error": "scope=current requiere --harness o SKILLGRAM_HARNESS"}), flush=True)
-            return 2
-        plan = onboard(hub, scope=scope, harness=harness, use_llm=not args.no_llm)
-        if args.plan:
-            Path(args.plan).write_text(json.dumps(plan, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        result = plan
-        if args.apply:
-            applied = apply_onboard(hub, plan)
-            replaced = {"quarantine": [], "links": [], "failures": []}
-            if args.replace_natives and applied["imported"]:
-                replaced = replace_native_with_link(
-                    hub, applied["imported"], HOME / ".agents" / "skillgram-quarantine"
-                )
-            linked = sync(hub, quiet=True)
-            result = {
-                **plan,
-                "applied": applied,
-                "reemplazo": replaced,
-                "sync": linked,
-                "ok": not applied["failed"] and not replaced["failures"],
-            }
-    elif args.cmd == "sync":
-        result = sync(hub, quiet=args.quiet, dry_run=args.dry_run)
-    elif args.cmd == "watch":
+            return adopt_natives(hub)
+        if args.path:
+            return adopt_skill(hub, Path(args.path))
+        return {"ok": False, "op": "adopt", "error": "pass a folder or --all"}
+
+    if cmd == "install":
+        return install(hub, harness=args.harness, root=args.root, apply=not args.dry_run,
+                       bootstrap_repos=args.bootstrap_repos, depth=args.depth)
+
+    if cmd == "propagate":
+        return propagate(hub, harness=args.harness, root=args.root, apply=args.apply,
+                         depth=args.depth, force=args.force, bootstrap_repos=args.bootstrap_repos)
+
+    if cmd == "doctor":
+        return doctor(hub)
+
+    if cmd == "onboard":
+        return _onboard(hub, args)
+
+    if cmd == "sync":
+        return sync(hub, quiet=args.quiet, dry_run=args.dry_run)
+
+    if cmd == "watch":
         if not hub.root.is_dir():
             print(json.dumps({"ok": False, "error": f"hub not found {hub.root}"}), flush=True)
             return 2
         if not single_instance():
             print(
-                json.dumps({"ok": False, "error": "ya hay un vigilante corriendo (no arranco otro)"}),
+                json.dumps({"ok": False, "error": "a watcher is already running (not starting another)"}),
                 flush=True,
             )
             return 3
@@ -4027,241 +4093,175 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             watcher.stop()
         return 0
-    elif args.cmd == "daemon":
+
+    if cmd == "daemon":
         return daemon(hub, interval=args.interval, watch_at_start=args.watch)
-    elif args.cmd == "install-autostart":
-        result = install_autostart(hub, args.interval)
-    elif args.cmd == "uninstall-autostart":
-        result = uninstall_autostart()
-    elif args.cmd == "init":
-        result = init_project(args.project, args.path, force=args.force)
-    elif args.cmd == "use":
+
+    if cmd == "install-autostart":
+        return install_autostart(hub, args.interval)
+
+    if cmd == "uninstall-autostart":
+        return uninstall_autostart()
+
+    if cmd == "init":
+        return init_project(args.project, args.path, force=args.force)
+
+    if cmd == "use":
         proj = resolve_project(args.project)
         result = promote(hub, args.skills, Path(proj["path"]))
         result["uso"] = touch_usage(Path(proj["path"]), args.skills).get("touched", [])
         result["resolucion"] = proj["source"]
-    elif args.cmd == "unuse":
+        return result
+
+    if cmd == "unuse":
         proj = resolve_project(args.project)
         result = unpromote(Path(proj["path"]), args.skills)
         result["resolucion"] = proj["source"]
-    elif args.cmd == "project-status":
+        return result
+
+    if cmd == "project-status":
         proj = resolve_project(args.project)
         result = project_status(hub, Path(proj["path"]))
         result["resolucion"] = proj["source"]
-    else:  # pragma: no cover - argparse ya valida
-        return 2
+        return result
 
-    if args.quiet and args.cmd == "sync":
-        print(json.dumps(result, ensure_ascii=False), flush=True)
-    elif args.json or args.cmd in {"daemon"}:
-        print(json.dumps(result, ensure_ascii=False), flush=True)
-    elif args.cmd == "install":
-        print(install_report(result), flush=True)
-    elif args.cmd == "propagate":
-        print(propagate_report(result), flush=True)
-    elif args.cmd == "onboard":
-        p = result
-        print(
-            f"scope: {p['scope']}"
-            + (f" ({p['harness']})" if p.get("harness") else " (todos los harnesss)")
-            + f"  | hub: {p['hub']}\n"
-            + "harnesss con skills native:\n"
-            + ("\n".join(f"  {h['app']:16} {h['native']:>4} native" for h in p["harnesses"] if h["native"])
-               or "  (ninguno)")
-            + f"\nplan: {p['summary']['import']} importar | {p['summary']['dedupe']} duplicadas | "
-            f"{p['summary']['conflict']} en conflicto"
-            + (f"\nllm: {p['llm']['model']} ({p['llm']['aplicadas']} skills clasificadas)" if p.get("llm") else "\nllm: no usada")
-            + (f"\nllm_error: {p['llm_error']}" if p.get("llm_error") else "")
-            + "\n"
-            + "\n".join(
-                f"  {a['action']:8} {a['harness']}/{a['skill']} -> {a['category']}"
-                + (f" [{a.get('flavor')}]" if a.get("flavor") else "")
-                + (f"  ({a['reason']})" if a.get("reason") else "")
-                for a in p["actions"][:40]
-            )
-            + (f"\n  ... y {len(p['actions']) - 40} mas" if len(p["actions"]) > 40 else "")
-            + ("\n\napplied: " + str(len(p["applied"]["imported"])) + " imported, "
-               + str(len(p["applied"]["skipped"])) + " salteadas, "
-               + str(len(p["applied"]["failed"])) + " failed" if p.get("applied") else "\n(solo plan: corre con --apply para ejecutarlo)"),
-            flush=True,
-        )
-    elif args.cmd == "flavor":
-        result = flavor_scan(hub, apply=args.apply)
-    elif args.cmd == "port":
-        cfg = None if args.no_llm else llm_config()
-        if args.skill:
-            result = port_skill(hub, args.skill, args.to or "", cfg) if args.to else {
-                "ok": False, "op": "port", "error": "--to <harness> es obligatorio para una skill puntual"}
-        else:
-            targets = [args.to] if args.to else [
-                h["app"] for h in detect_harnesses() if h["skills_dir"]]
-            result = port_missing(hub, targets, cfg, apply=args.apply)
-    elif args.cmd == "precedence":
-        result = apply_precedence(hub, apply=args.apply,
-                                  only=normalize_harness(args.harness) if args.harness else None)
-    elif args.cmd == "list":
-        proj = resolve_project(args.project) if args.project else None
-        result = list_skills(hub, category=args.category,
-                             project=Path(proj["path"]) if proj else None,
-                             used=args.used, limit=args.limit)
-    elif args.cmd == "touch":
-        proj = resolve_project(args.project)
-        result = touch_usage(Path(proj["path"]), args.skills, by=args.by)
-        result["project"] = str(proj["path"])
-    elif args.cmd == "new":
-        result = new_skill(hub, args.name, category=args.category, author=args.by)
-    elif args.cmd == "lint":
-        result = lint_hub(hub, only=args.skill, strict=args.strict, contract=args.contract)
-    elif args.cmd == "diff":
-        result = diff_skill(hub, args.skill, Path(args.against))
-    elif args.cmd == "demand":
-        result = demand_report(limit=args.limit)
-    elif args.cmd == "git":
-        result = hub_git(hub, action=args.action, apply=args.apply)
-    elif args.cmd == "index":
-        result = index_build(hub)
-    elif args.cmd == "search":
-        result = index_search(" ".join(args.text), limit=args.limit)
-    elif args.cmd == "review":
-        proj = resolve_project(args.project)
-        result = review_list(hub, Path(proj["path"]), days=args.days, fail_if_stale=args.fail_if_stale)
-    elif args.cmd == "pin":
-        proj = resolve_project(args.project)
-        result = pin_skill(Path(proj["path"]), args.skills, pinned=not args.unpin)
-    elif args.cmd == "retire":
-        result = retire_skill(hub, args.skill, reason=args.reason)
-        if result.get("ok"):
-            result["sync"] = sync(hub, quiet=True)
-    elif args.cmd == "export":
-        result = export_hub(hub, Path(args.file))
-    elif args.cmd == "import":
-        result = import_hub(hub, Path(args.file), apply=args.apply)
-    elif args.cmd == "mcp":
-        return mcp_serve(hub, read_only=args.read_only)
-    elif args.cmd == "bootstrap":
-        proj = resolve_project(args.project)
-        cfg = None if args.no_llm else llm_config()
-        result = bootstrap(hub, Path(proj["path"]), cfg, apply=args.apply)
-        result["resolucion"] = proj["source"]
-    elif args.cmd == "missing":
-        proj = resolve_project(args.project)
-        result = missing(hub, " ".join(args.text))
-        result["project"] = str(proj["path"])
-    elif args.cmd == "propose":
-        proj = resolve_project(args.project)
-        cfg = None if args.no_llm else llm_config()
-        result = propose_skill(hub, Path(proj["path"]), " ".join(args.need), cfg, apply=args.apply)
-        result["resolucion"] = proj["source"]
-    elif args.cmd == "mount":
-        proj = resolve_project(args.project)
-        root = Path(proj["path"])
-        result = mount_project(hub, root, apply=args.apply, prune_global=args.prune_global)
-        if not result.get("ok") and args.bootstrap is not False:
-            cfg = llm_config()
-            want = args.bootstrap is True or bool(args.yes)
-            if cfg and args.apply and not want:
-                ans = ""
-                try:
-                    if sys.stdin.isatty() and not getattr(args, "json", False):
-                        ans = input(f"no skills in scope for {root.name}; bootstrap it now? [y/N]: ")
-                except (EOFError, OSError):
-                    ans = ""
-                want = ans.strip().lower().startswith("y")
-            if cfg and args.apply and want:
-                result["bootstrap"] = bootstrap(hub, root, cfg, apply=True)
-                if result["bootstrap"].get("applied"):
-                    result = mount_project(hub, root, apply=True, prune_global=args.prune_global)
-                    result["bootstrap"] = "done"
-            elif not cfg:
-                result["bootstrap_hint"] = "no LLM configured: run `skillgram use <skill>...` in this repo"
-        if result.get("ok") and args.apply and not getattr(args, "no_protocol", False):
-            result["protocol"] = inject_protocol(hub, root, apply=True)
-        result["resolucion"] = proj["source"]
-        result["resolucion"] = proj["source"]
-    elif args.cmd == "adopt":
-        if args.all:
-            result = adopt_natives(hub)
-        elif args.path:
-            result = adopt_skill(hub, Path(args.path))
-        else:
-            result = {"ok": False, "op": "adopt", "error": "pasame una carpeta o --all"}
-    elif args.cmd == "doctor":
-        d = result
-        inst = [h["app"] for h in d["harnesses"] if h["instalado"]]
-        with_skills = [h["app"] for h in d["harnesses"] if h["skills_dir"]]
-        print(
-            f"hub: {d['hub']}\n"
-            f"skills: {d['skills_hub']} in {d['categories']} categories\n"
-            f"harnesses installed ({len(inst)}): {', '.join(inst) or '-'}\n"
+    return {"ok": False, "op": cmd, "error": f"unknown command: {cmd}"}  # argparse ya valida
+
+
+def human_output(args, result: dict) -> str | None:
+    """Reporte humano de los comandos que tienen uno.
+
+    None = comando de maquina: una sola linea JSON (el contrato de AGENTS.md),
+    nunca texto a medias. Todo lo que se lee aca tiene que existir en el dict que
+    devuelve `dispatch`: es el punto donde un rename de clave rompe el CLI en
+    silencio.
+    """
+    cmd = args.cmd
+
+    if cmd == "doctor":
+        installed = [h["app"] for h in result["harnesses"] if h["instalado"]]
+        with_skills = [h["app"] for h in result["harnesses"] if h["skills_dir"]]
+        return (
+            f"hub: {result['hub']}\n"
+            f"skills: {result['skills_hub']} in {result['categories']} categories\n"
+            f"harnesses installed ({len(installed)}): {', '.join(installed) or '-'}\n"
             f"with a skills/ folder ({len(with_skills)}): {', '.join(with_skills) or '-'}\n"
             "harness                       links  dead  missing  native  collisions\n"
             + "\n".join(
                 f"{r['app'][:28]:28}  {r['hub_links']:>7}  {r['dead']:>7}  "
                 f"{r['missing']:>6}  {r['native']:>7}  {len(r['collisions']):>10}"
-                for r in d["agents"]
+                for r in result["agents"]
             )
             + "\n"
-            + ("\n".join(f"- {r}" for r in d["recommendations"]) if d["recommendations"] else ""),
-            flush=True,
+            + ("\n".join(f"- {r}" for r in result["recommendations"]) if result["recommendations"] else "")
         )
-    elif args.cmd in {"status", "sync", "install-autostart", "uninstall-autostart"}:
-        if args.cmd == "status":
-            s = result
-            print(
-                f"hub: {s['hub']}\n"
-                f"skills: {s['skills']} in {s['categories']} categories ({s['nested']} nested), agents: {s['agents']}\n"
-                f"drift: {s['drift']} (missing {s['missing']}, mispointed {s['mispointed']}, "
-                f"dead {s['dead']}, skipped {s['skipped']})",
-                flush=True,
+
+    if cmd == "onboard":
+        return (
+            f"scope: {result['scope']}"
+            + (f" ({result['harness']})" if result.get("harness") else " (todos los harnesss)")
+            + f"  | hub: {result['hub']}\n"
+            + "harnesss con skills native:\n"
+            + ("\n".join(f"  {h['app']:16} {h['native']:>4} native" for h in result["harnesses"] if h["native"])
+               or "  (ninguno)")
+            + f"\nplan: {result['summary']['import']} importar | {result['summary']['dedupe']} duplicadas | "
+            f"{result['summary']['conflict']} en conflicto"
+            + (f"\nllm: {result['llm']['model']} ({result['llm']['aplicadas']} skills clasificadas)"
+               if result.get("llm") else "\nllm: no usada")
+            + (f"\nllm_error: {result['llm_error']}" if result.get("llm_error") else "")
+            + "\n"
+            + "\n".join(
+                f"  {a['action']:8} {a['harness']}/{a['skill']} -> {a['category']}"
+                + (f" [{a.get('flavor')}]" if a.get("flavor") else "")
+                + (f"  ({a['reason']})" if a.get("reason") else "")
+                for a in result["actions"][:40]
             )
-        else:
-            print(json.dumps(result, ensure_ascii=False), flush=True)
-    elif args.cmd == "init":
+            + (f"\n  ... and {len(result['actions']) - 40} mas" if len(result["actions"]) > 40 else "")
+            + ("\n\napplied: " + str(len(result["applied"]["imported"])) + " imported, "
+               + str(len(result["applied"]["skipped"])) + " salteadas, "
+               + str(len(result["applied"]["failed"])) + " failed"
+               if result.get("applied") else "\n(solo plan: corre con --apply para ejecutarlo)")
+        )
+
+    if cmd == "status":
+        return (
+            f"hub: {result['hub']}\n"
+            f"skills: {result['skills']} in {result['categories']} categories "
+            f"({result['nested']} nested), agents: {result['agents']}\n"
+            f"drift: {result['drift']} (missing {result['missing']}, mispointed {result['mispointed']}, "
+            f"dead {result['dead']}, skipped {result['skipped']})"
+        )
+
+    if cmd == "install":
+        return install_report(result)
+
+    if cmd == "propagate":
+        return propagate_report(result)
+
+    if cmd == "init":
         if result.get("ok"):
-            print(f"proyecto: {result['project_name']}  ({result['config']})", flush=True)
-        else:
-            print(result.get("error", "no se pudo inicializar"), flush=True)
-    elif args.cmd == "use":
-        print(
+            return f"proyecto: {result['project_name']}  ({result['config']})"
+        return result.get("error", "no se pudo inicializar")
+
+    if cmd == "use":
+        return (
             f"proyecto: {result['project_name']} ({result['project']})\n"
             f"promoted: {len(result['created'])} nuevas, {len(result['already_present'])} already present\n"
             + (f"unknown in hub: {', '.join(result['unknown'])}\n" if result["unknown"] else "")
-            + (f"occupied without link: {', '.join(result['ocupadas_sin_enlace'])}\n" if result["ocupadas_sin_enlace"] else "")
-            + f"manifest: {result['manifest']}",
-            flush=True,
+            + (f"occupied without link: {', '.join(result['ocupadas_sin_enlace'])}\n"
+               if result["ocupadas_sin_enlace"] else "")
+            + f"manifest: {result['manifest']}"
         )
-    elif args.cmd == "unuse":
-        print(
-            f"proyecto: {result['project']}\n"
-            f"removed: {len(result['removed'])}"
-            + (f" | no estaban: {', '.join(result['absent'])}" if result["no_estaban"] else ""),
-            flush=True,
-        )
-    elif args.cmd == "project-status":
-        s = result
-        print(
-            f"proyecto: {s['project_name']} ({s['project']})  resolucion: {s['resolucion']}\n"
-            f"promoted: {s['promoted']} | healthy {len(s['healthy'])} | "
-            f"stale {len(s['stale'])} | broken {len(s['broken'])} | missing link {len(s['missing_links'])}\n"
-            + (f"stale: {', '.join(s['stale'])}\n" if s["stale"] else "")
-            + (f"broken: {'; '.join(s['broken'])}\n" if s["broken"] else "")
-            + (f"missing link: {'; '.join(s['missing_links'])}\n" if s["sin_enlace"] else "")
-            + (
-                f"unregistered links: {', '.join(s['links_sin_registrar'])}\n"
-                if s["links_sin_registrar"]
-                else ""
-            )
-            + (
-                f"local duplicates (estan en el hub y ademas copiadas): {', '.join(s['local_duplicates'])}\n"
-                if s["duplicadas_locales"]
-                else ""
-            )
-            + (f"local only: {', '.join(s['local_only'])}\n" if s["locales_propias"] else "")
-            + ("" if s["tiene_config"] else "sin .agents/config.json (corre `init` para fijar el nombre)\n"),
-            flush=True,
-        )
-    else:
-        print(json.dumps(result, ensure_ascii=False), flush=True)
+
+    if cmd == "unuse":
+        lines = [
+            f"proyecto: {result['project']}",
+            f"removed: {len(result['removed'])}",
+        ]
+        if result["absent"]:
+            lines.append(f"no estaban: {', '.join(result['absent'])}")
+        return "\n".join(lines)
+
+    if cmd == "project-status":
+        lines = [
+            f"proyecto: {result['project_name']} ({result['project']})  resolucion: {result['resolucion']}",
+            f"promoted: {result['promoted']} | healthy {len(result['healthy'])} | "
+            f"stale {len(result['stale'])} | broken {len(result['broken'])} | "
+            f"missing link {len(result['missing_links'])}",
+        ]
+        for label, items in (
+            ("stale", result["stale"]),
+            ("broken", result["broken"]),
+            ("missing links", result["missing_links"]),
+            ("unregistered links", result["links_sin_registrar"]),
+            ("local duplicates (estan en el hub y ademas copiadas)", result["local_duplicates"]),
+            ("local only", result["local_only"]),
+        ):
+            if items:
+                lines.append(f"{label}: {', '.join(items)}")
+        if not result["tiene_config"]:
+            lines.append("sin .agents/config.json (corre `init` para fijar el nombre)")
+        return "\n".join(lines)
+
+    return None
+
+
+def render(args, result: dict) -> None:
+    """Un comando de maquina imprime una linea JSON; los humanos, su reporte.
+
+    `--json` gana siempre: es la unica forma de que un humano (o un test) vea el
+    dict crudo sin cambiar el flujo.
+    """
+    text = None if args.json else human_output(args, result)
+    print(text if text is not None else json.dumps(result, ensure_ascii=False), flush=True)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    result = dispatch(args, Hub(Path(args.hub)))
+    if isinstance(result, int):
+        return result
+    render(args, result)
     return 0 if result.get("ok", False) else 1
 
 

@@ -1,5 +1,7 @@
-"""skillgram tests — stdlib only: python -m unittest discover -s tests -v"""
+﻿"""skillgram tests — stdlib only: python -m unittest discover -s tests -v"""
 
+import contextlib
+import io
 import json
 import os
 import sys
@@ -1053,6 +1055,103 @@ class TestPropagate(InstallCase):
         self.assertEqual(res["rows"], [])
         self.assertEqual(res["ignored_hub"], [str(self.hub_root.resolve())])
 
+
+class TestCliSurface(HomeCase):
+    """La capa que nadie probaba: que `main` ejecute el comando una sola vez y que
+    cada salida (JSON de maquina / reporte humano) lea claves que existen."""
+
+    def run_cli(self, *argv):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = skillgram.main([str(a) for a in argv])
+        return code, [line for line in buf.getvalue().splitlines() if line.strip()]
+
+    def json_line(self, out):
+        self.assertEqual(len(out), 1, f"se esperaba una sola linea JSON, salio: {out}")
+        return json.loads(out[0])
+
+    def test_machine_commands_run_once_and_print_one_json_line(self):
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        code, out = self.run_cli("new", "fresh-skill", "--hub", self.hub_root)
+        # una segunda corrida del mismo comando devolveria "already exists" y exit 1
+        self.assertEqual(code, 0)
+        payload = self.json_line(out)
+        self.assertTrue(payload["ok"])
+        self.assertTrue((self.hub_root / "imported" / "fresh-skill" / "SKILL.md").is_file())
+
+        for argv in (("list",), ("demand",), ("index",), ("flavor",), ("search", "deploy")):
+            code, out = self.run_cli(*argv, "--hub", self.hub_root)
+            self.assertEqual(code, 0, argv)
+            self.json_line(out)
+
+    def test_retire_runs_once_and_reports_the_tombstone(self):
+        make_skill(self.hub_root, "infra-ops", "old-one")
+        code, out = self.run_cli("retire", "old-one", "--hub", self.hub_root)
+        self.assertEqual(code, 0)
+        payload = self.json_line(out)
+        self.assertTrue(payload["ok"])
+        self.assertIn("_retired", payload["to"])
+
+    def test_json_flag_wins_over_the_human_report(self):
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        code, out = self.run_cli("status", "--hub", self.hub_root, "--json")
+        self.assertEqual(code, 0)
+        payload = self.json_line(out)
+        self.assertEqual(payload["skills"], 1)
+
+    def test_unuse_says_what_was_not_in_scope(self):
+        proj = self.tmp / "proj"
+        skillgram.init_project("proj", str(proj))
+        code, out = self.run_cli("unuse", "ghost", "--hub", self.hub_root, "--project", proj)
+        self.assertEqual(code, 0)
+        text = "\n".join(out)
+        self.assertIn("removed: 0", text)
+        self.assertIn("no estaban: ghost", text)
+
+    def test_project_status_prints_every_section_it_counts(self):
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        make_skill(self.hub_root, "infra-ops", "helper")
+        make_skill(self.hub_root, "infra-ops", "extra")
+        proj = self.tmp / "proj"
+        skillgram.init_project("proj", str(proj))
+        hub = skillgram.Hub(self.hub_root)
+        skillgram.promote(hub, ["deploy", "helper"], proj)
+        links = proj / ".agents" / "skills"
+        # stale: el hub cambio despues de promover
+        (self.hub_root / "infra-ops" / "deploy" / "SKILL.md").write_text("changed\n", encoding="utf-8")
+        # missing link: una skill registrada cuyo enlace ya no existe
+        self.assertTrue(skillgram._remove_junction(links / "helper"))
+        (links / "helper").mkdir()
+        (links / "helper" / "SKILL.md").write_text("x\n", encoding="utf-8")
+        # local duplicate: copia real de una skill del hub fuera del manifest
+        (links / "extra").mkdir()
+        (links / "extra" / "SKILL.md").write_text("x\n", encoding="utf-8")
+        # local only: carpeta propia del proyecto
+        (links / "mine").mkdir()
+        (links / "mine" / "SKILL.md").write_text("x\n", encoding="utf-8")
+
+        code, out = self.run_cli("project-status", "--hub", self.hub_root, "--project", proj)
+        # drift (un enlace faltante) se reporta con exit 1, no con una excepcion
+        self.assertEqual(code, 1)
+        text = "\n".join(out)
+        self.assertIn("resolucion: explicit", text)
+        self.assertIn("stale: deploy", text)
+        self.assertIn("missing links: helper", text)
+        self.assertIn("local duplicates (estan en el hub y ademas copiadas): extra", text)
+        self.assertIn("local only: mine", text)
+
+    def test_human_commands_keep_their_reporter(self):
+        proj = self.tmp / "proj"
+        code, out = self.run_cli("init", "named", "--hub", self.hub_root, "--path", proj)
+        self.assertEqual(code, 0)
+        self.assertTrue(out[0].startswith("proyecto: named"))
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        code, out = self.run_cli("use", "deploy", "--hub", self.hub_root, "--project", proj)
+        self.assertEqual(code, 0)
+        self.assertIn("promoted: 1 nuevas, 0 already present", out)
+        code, out = self.run_cli("status", "--hub", self.hub_root)
+        self.assertEqual(code, 0)
+        self.assertTrue(out[0].startswith("hub: "))
 
 if __name__ == "__main__":
     unittest.main()
