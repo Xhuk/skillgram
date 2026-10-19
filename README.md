@@ -254,8 +254,10 @@ and the skill that walks an agent through them:
 
 `skillgram --help` lists all of them (37); `skillgram <command> --help` is the contract for
 one. Every command prints **exactly one JSON line** on stdout (`--json` for the human ones too).
-Exit code `0` healthy, `1` drift/error, `2` bad invocation — and a plan-only run (`onboard`,
-`precedence`, `bootstrap`) is `0` when the plan was produced.
+`--hub`, `--json` and `--quiet` are global: `skillgram --hub X status` and `skillgram status --hub X`
+are the same command (the one after the subcommand wins when both are given). Exit code `0` healthy,
+`1` drift/error, `2` bad invocation — and a plan-only run (`onboard`, `precedence`, `bootstrap`)
+is `0` when the plan was produced.
 
 ## Authoring a skill: one contract, one gate (1.3)
 

@@ -1,4 +1,4 @@
-﻿"""skillgram tests — stdlib only: python -m unittest discover -s tests -v"""
+"""skillgram tests — stdlib only: python -m unittest discover -s tests -v"""
 
 import contextlib
 import io
@@ -219,7 +219,7 @@ class TestOnboard(HomeCase):
         plan = skillgram.build_onboard_plan(skillgram.Hub(self.hub_root), scope="all")
         dedupe = [a for a in plan["actions"] if a["action"] == "dedupe"]
         self.assertTrue(dedupe)
-        self.assertTrue(dedupe[0]["reason"].startswith("identica a"))
+        self.assertTrue(dedupe[0]["reason"].startswith("identical to"))
 
     def test_apply_imports_the_native_skill(self):
         make_skill(self.home / ".fakeagent", "skills", "native-one")
@@ -324,7 +324,7 @@ class TestFlavor(HomeCase):
     def test_port_skips_generic_and_without_llm(self):
         make_skill(self.hub_root, "infra-ops", "plain", "generica")
         hub = skillgram.Hub(self.hub_root)
-        self.assertIn("generica", skillgram.port_skill(hub, "plain", "reasonix", None).get("skipped", ""))
+        self.assertIn("already generic", skillgram.port_skill(hub, "plain", "reasonix", None).get("skipped", ""))
         wired = make_skill(self.hub_root, "infra-ops", "wired", "`claude -p` y .claude/ x")
         skillgram.write_skill_meta(wired, {"flavor": "claude"})
         res = skillgram.port_skill(hub, "wired", "reasonix", None)
@@ -583,7 +583,7 @@ class TestBootstrap(HomeCase):
         skillgram.init_project("app", str(proj))
         skillgram.promote(sk, ["deploy"], proj)
         res = skillgram.bootstrap(sk, proj, None)
-        self.assertIn("ya tiene scope", res["skipped"])
+        self.assertIn("already has a scope", res["skipped"])
 
     def test_propose_requires_llm(self):
         proj = self.tmp / "app"
@@ -1149,7 +1149,7 @@ class TestCliSurface(HomeCase):
         self.assertEqual(code, 0)
         text = "\n".join(out)
         self.assertIn("removed: 0", text)
-        self.assertIn("no estaban: ghost", text)
+        self.assertIn("not in scope: ghost", text)
 
     def test_project_status_prints_every_section_it_counts(self):
         make_skill(self.hub_root, "infra-ops", "deploy")
@@ -1177,21 +1177,21 @@ class TestCliSurface(HomeCase):
         # drift (un enlace faltante) se reporta con exit 1, no con una excepcion
         self.assertEqual(code, 1)
         text = "\n".join(out)
-        self.assertIn("resolucion: explicit", text)
+        self.assertIn("resolution: explicit", text)
         self.assertIn("stale: deploy", text)
         self.assertIn("missing links: helper", text)
-        self.assertIn("local duplicates (estan en el hub y ademas copiadas): extra", text)
+        self.assertIn("local duplicates (in the hub and also copied): extra", text)
         self.assertIn("local only: mine", text)
 
     def test_human_commands_keep_their_reporter(self):
         proj = self.tmp / "proj"
         code, out = self.run_cli("init", "named", "--hub", self.hub_root, "--path", proj)
         self.assertEqual(code, 0)
-        self.assertTrue(out[0].startswith("proyecto: named"))
+        self.assertTrue(out[0].startswith("project: named"))
         make_skill(self.hub_root, "infra-ops", "deploy")
         code, out = self.run_cli("use", "deploy", "--hub", self.hub_root, "--project", proj)
         self.assertEqual(code, 0)
-        self.assertIn("promoted: 1 nuevas, 0 already present", out)
+        self.assertIn("promoted: 1 new, 0 already present", out)
         code, out = self.run_cli("status", "--hub", self.hub_root)
         self.assertEqual(code, 0)
         self.assertTrue(out[0].startswith("hub: "))
@@ -1218,9 +1218,22 @@ class TestCliSurface(HomeCase):
         code, out = self.run_cli("onboard", "--no-llm", "--hub", self.hub_root)
         self.assertEqual(code, 0)
         text = "\n".join(out)
-        self.assertIn("harnesss con skills native:", text)
-        self.assertIn("1 en conflicto", text)
+        self.assertIn("harnesses with native skills:", text)
+        self.assertIn("1 conflict", text)
         self.assertIn("a skill with that name already exists in the hub", text)
+
+    def test_global_flags_work_before_the_subcommand(self):
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        code, out = self.run_cli("--hub", self.hub_root, "--json", "status")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.json_line(out)["skills"], 1)
+
+    def test_flags_after_the_subcommand_still_win(self):
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        code, out = self.run_cli("--hub", self.tmp / "nowhere", "--json", "status", "--hub", self.hub_root)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.json_line(out)["skills"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

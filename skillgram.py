@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """skillgram - one skill hub, linked into every agent; project scope on demand.
 
 What it is
@@ -730,7 +730,7 @@ def project_status(hub: Hub, project: Path) -> dict:
             continue
         tgt = link_target(dest)
         if not tgt or Path(tgt).resolve() != src.resolve():
-            broken.append(f"{name}: apunta a {tgt}")
+            broken.append(f"{name}: points to {tgt}")
             continue
         if entry.get("hash") and entry["hash"] != skill_hash(src):
             stale.append(name)
@@ -750,7 +750,7 @@ def project_status(hub: Hub, project: Path) -> dict:
             elif (d / "SKILL.md").exists():
                 (duplicates if d.name in known else local_only).append(d.name)
             elif d.is_dir():
-                local_only.append(f"{d.name} (sin SKILL.md)")
+                local_only.append(f"{d.name} (no SKILL.md)")
 
     return {
         "ok": not broken and not unlinked,
@@ -865,12 +865,12 @@ def doctor(hub: Hub) -> dict:
         recos.append("run `sync` to create missing links and drop dead ones")
     nat = sum(r["native"] for r in rows)
     if nat:
-        recos.append(f"{nat} skills native de agentes: quedan como estan, skillgram no las toca")
+        recos.append(f"{nat} agent-native skills: left as they are, skillgram never touches them")
     col = sum(len(r["collisions"]) for r in rows)
     if col:
         recos.append(f"{col} name collisions: `sync` skips them (never overwrites)")
     if not known:
-        recos.append(f"el hub {hub.root} esta vacio: agrega <tipo>/<skill>/SKILL.md")
+        recos.append(f"the hub {hub.root} is empty: add <type>/<skill>/SKILL.md")
 
     return {
         "ok": True,
@@ -1049,7 +1049,7 @@ def build_onboard_plan(hub: Hub, scope: str = "all", harness: str | None = None)
             }
             if nat["hash"] in seen:
                 action["action"] = "dedupe"
-                action["reason"] = f"identica a {seen[nat['hash']]}"
+                action["reason"] = f"identical to {seen[nat['hash']]}"
             elif nat["in_hub"]:
                 action["action"] = "conflict"
                 action["reason"] = "a skill with that name already exists in the hub"
@@ -1102,7 +1102,7 @@ def llm_refine_plan(hub: Hub, plan: dict, cfg: dict) -> dict:
     raw = llm_chat(cfg, LLM_SYSTEM, user)
     start, end = raw.find("{"), raw.rfind("}")
     if start < 0 or end <= start:
-        plan["llm_error"] = "la LLM no devolvio JSON"
+        plan["llm_error"] = "the LLM did not return JSON"
         return plan
     try:
         data = json.loads(raw[start : end + 1])
@@ -1125,7 +1125,7 @@ def llm_refine_plan(hub: Hub, plan: dict, cfg: dict) -> dict:
         dup = str(item.get("duplicate_of", "")).strip()
         if dup and dup != action["skill"] and action["action"] == "import":
             action["action"] = "dedupe"
-            action["reason"] = f"la LLM dice que es lo mismo que {dup}"
+            action["reason"] = f"the LLM says it is the same as {dup}"
         if item.get("reason"):
             action["reason"] = action["reason"] or str(item["reason"])[:200]
         applied += 1
@@ -1153,7 +1153,7 @@ def apply_onboard(hub: Hub, plan: dict) -> dict:
             continue
         if skill_hash(dest) != action["hash"]:
             shutil.rmtree(dest, ignore_errors=True)
-            failed.append(f"{action['skill']}: hash distinto tras copiar")
+            failed.append(f"{action['skill']}: hash mismatch after copying")
             continue
         imported.append({"skill": action["skill"], "harness": action["harness"], "to": str(dest), "harness_dir": str(src.parent)})
     return {"imported": imported, "skipped": skipped, "failed": failed}
@@ -1170,7 +1170,7 @@ def replace_native_with_link(hub: Hub, imported: list, quarantine: Path) -> dict
     for item in imported:
         src = Path(item["harness_dir"]) / item["skill"] if item.get("harness_dir") else None
         if not src or not src.is_dir():
-            failed.append(f"{item['skill']}: no encuentro la carpeta nativa")
+            failed.append(f"{item['skill']}: native folder not found")
             continue
         dest = Path(item["to"])
         qdir = quarantine / item["harness"]
@@ -1308,9 +1308,9 @@ def port_skill(hub: Hub, name: str, to_harness: str, cfg: dict | None) -> dict:
     meta = skill_meta(d)
     flavor = meta.get("flavor") or detect_flavor(d)["flavor"]
     if flavor == GENERIC_FLAVOR:
-        return {"ok": True, "op": "port", "skill": name, "skipped": "la skill ya es generica"}
+        return {"ok": True, "op": "port", "skill": name, "skipped": "the skill is already generic"}
     if not cfg:
-        return {"ok": False, "op": "port", "skill": name, "error": "no hay LLM conectada configurada"}
+        return {"ok": False, "op": "port", "skill": name, "error": "no LLM configured"}
     existing = d / AGENTS_DIR / f"{to_harness}.md"
     if existing.is_file():
         return {"ok": True, "op": "port", "skill": name, "skipped": f"already exists: {existing}"}
@@ -1321,7 +1321,7 @@ def port_skill(hub: Hub, name: str, to_harness: str, cfg: dict | None) -> dict:
         return {"ok": False, "op": "port", "skill": name, "error": str(exc)}
     answer = answer.strip()
     if answer.upper().startswith("NO_PORT_NEEDED"):
-        return {"ok": True, "op": "port", "skill": name, "skipped": "el modelo dice que no hace falta"}
+        return {"ok": True, "op": "port", "skill": name, "skipped": "the model says no port is needed"}
     existing.parent.mkdir(parents=True, exist_ok=True)
     existing.write_text(answer + "\n", encoding="utf-8")
     ports = meta.setdefault("ports", {})
@@ -1528,7 +1528,7 @@ def adopt_skill(hub: Hub, path: Path, quarantine_root: Path | None = None) -> di
         return {"ok": False, "op": "adopt", "path": str(src), "error": str(exc)}
     if skill_hash(dest) != original_hash:
         shutil.rmtree(dest, ignore_errors=True)
-        return {"ok": False, "op": "adopt", "path": str(src), "error": "hash distinto tras copiar"}
+        return {"ok": False, "op": "adopt", "path": str(src), "error": "hash mismatch after copying"}
     qroot = quarantine_root or (HOME / ".agents" / "skillgram-quarantine")
     qdir = qroot / src.parent.name
     qdir.mkdir(parents=True, exist_ok=True)
@@ -1831,7 +1831,7 @@ def llm_select(cfg: dict, project: Path, signals: dict, candidates: list) -> dic
     raw = llm_chat(cfg, BOOTSTRAP_SYSTEM, json.dumps(payload, ensure_ascii=False)[:24000])
     start, end = raw.find("{"), raw.rfind("}")
     if start < 0 or end <= start:
-        raise OSError("la LLM no devolvio JSON")
+        raise OSError("the LLM did not return JSON")
     data = json.loads(raw[start:end + 1])
     known = {c["skill"] for c in candidates}
     selected = []
@@ -1847,7 +1847,7 @@ def bootstrap(hub: Hub, project: Path, cfg: dict | None, apply: bool = False) ->
     """Plan (y opcional aplicacion) del set inicial de un proyecto sin scope."""
     scope = project_scope(hub, project)
     if scope["skills"]:
-        return {"ok": True, "op": "bootstrap", "skipped": "el proyecto ya tiene scope",
+        return {"ok": True, "op": "bootstrap", "skipped": "the project already has a scope",
                 "project": str(project), "skills": len(scope["skills"])}
     signals = repo_signals(project)
     candidates = candidate_skills(hub, signals)
@@ -1924,7 +1924,7 @@ def re_findall_words(text: str) -> list:
 def propose_skill(hub: Hub, project: Path, need: str, cfg: dict | None, apply: bool = False) -> dict:
     """Redacta una skill nueva (LLM), la valida y (con apply) la publica + registra."""
     if not cfg:
-        return {"ok": False, "op": "propose", "error": "no hay LLM conectada configurada"}
+        return {"ok": False, "op": "propose", "error": "no LLM configured"}
     signals = repo_signals(project)
     prompt = (
         f"need: {need}\nrepo: {project.name}\nsignals: {', '.join(signals['files'])}\n"
@@ -2240,7 +2240,7 @@ def import_hub(hub: Hub, src: Path, apply: bool = False) -> dict:
                 failed.append(f"{name}: missing from the archive")
                 continue
             if skill_hash(src_dir) != item.get("hash"):
-                failed.append(f"{name}: hash distinto")
+                failed.append(f"{name}: hash mismatch")
                 continue
             dest = hub.root / tipo / name
             if dest.exists():
@@ -3632,7 +3632,7 @@ def daemon(hub: Hub, interval: float = 5.0, watch_at_start: bool = False) -> int
         try:
             msg = json.loads(raw)
         except ValueError:
-            reply({"ok": False, "error": "linea no es JSON"})
+            reply({"ok": False, "error": "the line is not JSON"})
             continue
         op = str(msg.get("op", "")).strip()
         try:
@@ -3648,7 +3648,7 @@ def daemon(hub: Hub, interval: float = 5.0, watch_at_start: bool = False) -> int
                 if "interval" in msg:
                     watcher.interval = float(msg["interval"])
                 if not watcher.running and not single_instance():
-                    reply({"ok": False, "error": "ya hay un vigilante corriendo"})
+                    reply({"ok": False, "error": "a watcher is already running"})
                     continue
                 watcher.start()
                 reply({"ok": True, "op": "watch.on", "watching": watcher.running})
@@ -3659,7 +3659,7 @@ def daemon(hub: Hub, interval: float = 5.0, watch_at_start: bool = False) -> int
                 reply({"ok": True, "op": "quit"})
                 break
             else:
-                reply({"ok": False, "error": f"unknown op: {op or '(vacia)'}"})
+                reply({"ok": False, "error": f"unknown op: {op or '(empty)'}"})
         except Exception as exc:  # noqa: BLE001 - el daemon no debe morir por una op
             reply({"ok": False, "op": op, "error": f"{type(exc).__name__}: {exc}"})
     watcher.stop()
@@ -3711,42 +3711,69 @@ def uninstall_autostart() -> dict:
 # ---------------------------------------------------------------------------
 
 
+def add_common_flags(parser: argparse.ArgumentParser, with_defaults: bool = True) -> None:
+    """--hub/--json/--quiet para un parser.
+
+    `with_defaults=False` deja cada opcion en SUPPRESS: el subparser solo escribe
+    el valor cuando el flag aparece de verdad. argparse vuelca los defaults del
+    subparser sobre el namespace que ya lleno el parser de arriba, asi que un
+    default normal aca borraria `skillgram --hub X status`.
+    """
+    parser.add_argument(
+        "--hub",
+        default=str(default_hub()) if with_defaults else argparse.SUPPRESS,
+        help="hub root (default ~/.agents/skills)",
+    )
+    parser.add_argument(
+        "--json", action="store_true",
+        default=False if with_defaults else argparse.SUPPRESS,
+        help="one JSON line on stdout",
+    )
+    parser.add_argument(
+        "--quiet", action="store_true",
+        default=False if with_defaults else argparse.SUPPRESS,
+        help="no logs on stdout",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="skillgram",
-        description="Mantiene los links de la biblioteca de skills en todos los agentes.",
+        description="Keeps the skill library linked into every agent.",
     )
+    # Los flags globales valen en las dos posiciones: `skillgram --hub X status`
+    # y `skillgram status --hub X`. El parser de arriba lleva los defaults; las
+    # copias de los subparsers van en SUPPRESS para no pisarlos.
+    add_common_flags(ap)
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--hub", default=str(default_hub()), help="raiz del hub (default ~/.agents/skills)")
-    common.add_argument("--json", action="store_true", help="salida JSON (una linea)")
-    common.add_argument("--quiet", action="store_true", help="sin logs en stdout")
+    add_common_flags(common, with_defaults=False)
 
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p_onb = sub.add_parser("onboard", parents=[common], help="detecta harnesss y unifica sus skills en el hub (LLM opcional)")
-    p_onb.add_argument("--scope", choices=["all", "current"], help="unificar todos los harnesss o solo uno (si falta, pregunta)")
-    p_onb.add_argument("--harness", help="nombre del harness para --scope current")
-    p_onb.add_argument("--apply", action="store_true", help="ejecuta el plan (sin esto solo lo muestra)")
-    p_onb.add_argument("--replace-natives", action="store_true", help="reemplaza la copia nativa por un link (la copia va a quarantine)")
-    p_onb.add_argument("--no-llm", action="store_true", help="no consulta la LLM conectada")
-    p_onb.add_argument("--plan", help="escribe el plan JSON en esa ruta")
-    sub.add_parser("flavor", parents=[common], help="detecta el flavor (agente) de cada skill del hub").add_argument(
-        "--apply", action="store_true", help="guarda el flavor en SKILLMETA.json")
-    p_port = sub.add_parser("port", parents=[common], help="porta skills cableadas a otro harness (agents/<harness>.md)")
-    p_port.add_argument("skill", nargs="?", help="skill puntual (si falta: escanea todo el hub)")
-    p_port.add_argument("--to", help="harness destino (si falta: todos los instalados)")
-    p_port.add_argument("--apply", action="store_true", help="genera los archivos (si falta: solo el plan)")
+    p_onb = sub.add_parser("onboard", parents=[common], help="detect the harnesses and unify their skills into the hub (optional LLM)")
+    p_onb.add_argument("--scope", choices=["all", "current"], help="unify all harnesses or just one (asks when missing)")
+    p_onb.add_argument("--harness", help="harness name for --scope current")
+    p_onb.add_argument("--apply", action="store_true", help="execute the plan (without it: show it only)")
+    p_onb.add_argument("--replace-natives", action="store_true", help="replace the native copy with a link (the copy goes to quarantine)")
+    p_onb.add_argument("--no-llm", action="store_true", help="do not ask the connected LLM")
+    p_onb.add_argument("--plan", help="write the JSON plan to this path")
+    sub.add_parser("flavor", parents=[common], help="detect which agent each hub skill is wired to").add_argument(
+        "--apply", action="store_true", help="save the flavor into SKILLMETA.json")
+    p_port = sub.add_parser("port", parents=[common], help="port skills hard-wired to another harness (agents/<harness>.md)")
+    p_port.add_argument("skill", nargs="?", help="one skill (default: scan the whole hub)")
+    p_port.add_argument("--to", help="target harness (default: every installed one)")
+    p_port.add_argument("--apply", action="store_true", help="write the files (default: plan only)")
     p_port.add_argument("--no-llm", action="store_true")
-    p_prec = sub.add_parser("precedence", parents=[common], help="declara el hub primero en la config de cada harness")
-    p_prec.add_argument("--apply", action="store_true", help="escribe (con backup); si falta, solo muestra")
-    p_prec.add_argument("--harness", help="solo este harness (p. ej. hermes, con su propio HERMES_HOME)")
-    p_adopt = sub.add_parser("adopt", parents=[common], help="adopta skills native: copia al hub, verifica hash, deja link")
-    p_adopt.add_argument("path", nargs="?", help="carpeta de la skill")
-    p_adopt.add_argument("--all", action="store_true", help="todas las native de todos los harnesss")
-    p_mount = sub.add_parser("mount", parents=[common], help="materializa el scope del proyecto en cada harness")
-    p_mount.add_argument("--project", help="carpeta del proyecto (default: resolucion tipo engram)")
-    p_mount.add_argument("--apply", action="store_true", help="crea/retira los links (si falta: solo el plan)")
-    p_mount.add_argument("--prune-global", action="store_true", help="ademas retira los links al hub de los homes (strict)")
+    p_prec = sub.add_parser("precedence", parents=[common], help="declare the hub first in each harness config")
+    p_prec.add_argument("--apply", action="store_true", help="write (with backup); default: show only")
+    p_prec.add_argument("--harness", help="only this harness (e.g. hermes, with its own HERMES_HOME)")
+    p_adopt = sub.add_parser("adopt", parents=[common], help="adopt native skills: copy into the hub, verify the hash, leave a link")
+    p_adopt.add_argument("path", nargs="?", help="the skill folder")
+    p_adopt.add_argument("--all", action="store_true", help="every native skill of every harness")
+    p_mount = sub.add_parser("mount", parents=[common], help="materialize the project scope in every harness")
+    p_mount.add_argument("--project", help="project folder (default: engram-style resolution)")
+    p_mount.add_argument("--apply", action="store_true", help="create/remove the links (default: plan only)")
+    p_mount.add_argument("--prune-global", action="store_true", help="also remove the home links to the hub (strict)")
     p_mount.add_argument("--no-protocol", action="store_true", help="do not inject the skillgram protocol into AGENTS.md/CLAUDE.md")
     p_mount.add_argument("--bootstrap", dest="bootstrap", action="store_true", default=None,
                          help="if the repo has no scope, bootstrap it with the connected LLM first (default: ask)")
@@ -3771,34 +3798,34 @@ def build_parser() -> argparse.ArgumentParser:
     p_prop.add_argument("--depth", type=int, default=3, help="how deep to look for repos under --root (default 3)")
     p_boot = sub.add_parser("bootstrap", parents=[common], help="repo without scope: signals + LLM picks the initial set (and reports gaps)")
     p_boot.add_argument("--project")
-    p_boot.add_argument("--apply", action="store_true", help="registra el set elegido en el proyecto")
+    p_boot.add_argument("--apply", action="store_true", help="record the chosen set in the project")
     p_boot.add_argument("--no-llm", action="store_true")
-    p_miss = sub.add_parser("missing", parents=[common], help="consulta determinista: hay skill para esto?")
+    p_miss = sub.add_parser("missing", parents=[common], help="deterministic query: is there a skill for this?")
     p_miss.add_argument("text", nargs="+")
     p_miss.add_argument("--project")
-    p_prop = sub.add_parser("propose", parents=[common], help="redacta una skill nueva con la LLM y (con --apply) la publica")
+    p_prop = sub.add_parser("propose", parents=[common], help="draft a new skill with the LLM and (with --apply) publish it")
     p_prop.add_argument("need", nargs="+")
     p_prop.add_argument("--project")
-    p_prop.add_argument("--apply", action="store_true", help="publica en el hub, registra y monta")
+    p_prop.add_argument("--apply", action="store_true", help="publish into the hub, record it and mount it")
     p_prop.add_argument("--no-llm", action="store_true")
-    sub.add_parser("index", parents=[common], help="(re)construye el indice FTS5 del hub")
-    p_srch = sub.add_parser("search", parents=[common], help="busqueda full-text en el hub")
+    sub.add_parser("index", parents=[common], help="(re)build the hub FTS5 index")
+    p_srch = sub.add_parser("search", parents=[common], help="full-text search in the hub")
     p_srch.add_argument("text", nargs="+")
     p_srch.add_argument("--limit", type=int, default=10)
     p_rev = sub.add_parser("review", parents=[common], help="skills never used or not used recently")
     p_rev.add_argument("--project")
     p_rev.add_argument("--days", type=int, default=90)
     p_rev.add_argument("--fail-if-stale", action="store_true", help="exit 1 when something is stale (CI gate)")
-    p_pin = sub.add_parser("pin", parents=[common], help="marca skills del proyecto como fijas (no caducan)")
+    p_pin = sub.add_parser("pin", parents=[common], help="pin project skills (they never go stale)")
     p_pin.add_argument("skills", nargs="+")
     p_pin.add_argument("--project")
     p_pin.add_argument("--unpin", action="store_true")
-    p_ret = sub.add_parser("retire", parents=[common], help="retira una skill del hub a _retired (nunca borra)")
+    p_ret = sub.add_parser("retire", parents=[common], help="retire a hub skill into _retired (never deletes)")
     p_ret.add_argument("skill")
     p_ret.add_argument("--reason", default="")
-    p_exp = sub.add_parser("export", parents=[common], help="exporta el hub a un tar.gz con hashes")
+    p_exp = sub.add_parser("export", parents=[common], help="export the hub into a tar.gz with hashes")
     p_exp.add_argument("file")
-    p_imp = sub.add_parser("import", parents=[common], help="importa un tar.gz exportado por skillgram")
+    p_imp = sub.add_parser("import", parents=[common], help="import a tar.gz exported by skillgram")
     p_imp.add_argument("file")
     p_imp.add_argument("--apply", action="store_true")
     p_lint = sub.add_parser("lint", parents=[common], help="quality gate: frontmatter, name, description, body size")
@@ -3829,34 +3856,34 @@ def build_parser() -> argparse.ArgumentParser:
     p_diff.add_argument("--against", required=True, help="path to the other copy")
     p_mcp = sub.add_parser("mcp", parents=[common], help="MCP server (stdio) so the agent can query the hub")
     p_mcp.add_argument("--read-only", action="store_true", help="the agent can query but not write")
-    sub.add_parser("doctor", parents=[common], help="inventario: harnesss, native, collisions, drift")
-    p_status = sub.add_parser("status", parents=[common], help="drift actual sin tocar nada")
-    p_status.add_argument("--verify", action="store_true", help="ademas verifica a donde apunta cada enlace (lento)")
-    p_sync = sub.add_parser("sync", parents=[common], help="aplica el estado deseado (idempotente)")
+    sub.add_parser("doctor", parents=[common], help="inventory: harnesses, native, collisions, drift")
+    p_status = sub.add_parser("status", parents=[common], help="current drift, touching nothing")
+    p_status.add_argument("--verify", action="store_true", help="also verify where each link points (slow)")
+    p_sync = sub.add_parser("sync", parents=[common], help="apply the desired state (idempotent)")
     p_sync.add_argument("--dry-run", action="store_true")
-    p_watch = sub.add_parser("watch", parents=[common], help="vigila el hub y re-sincroniza solo")
+    p_watch = sub.add_parser("watch", parents=[common], help="watch the hub and re-sync on change")
     p_watch.add_argument("--interval", type=float, default=5.0)
-    p_daemon = sub.add_parser("daemon", parents=[common], help="servidor JSON-linea para edgePass")
+    p_daemon = sub.add_parser("daemon", parents=[common], help="JSON-line server for edgePass")
     p_daemon.add_argument("--interval", type=float, default=5.0)
-    p_daemon.add_argument("--watch", action="store_true", help="arranca vigilando")
-    p_auto = sub.add_parser("install-autostart", parents=[common], help="tarea programada al iniciar sesion")
+    p_daemon.add_argument("--watch", action="store_true", help="start watching immediately")
+    p_auto = sub.add_parser("install-autostart", parents=[common], help="scheduled task at logon")
     p_auto.add_argument("--interval", type=float, default=10.0)
-    sub.add_parser("uninstall-autostart", parents=[common], help="quita la tarea programada")
+    sub.add_parser("uninstall-autostart", parents=[common], help="remove the scheduled task")
 
-    p_init = sub.add_parser("init", parents=[common], help="crea .agents/config.json del proyecto")
-    p_init.add_argument("project", nargs="?", help="nombre del proyecto (default: basename del cwd)")
-    p_init.add_argument("--path", help="carpeta del proyecto (default: cwd)")
-    p_init.add_argument("--force", action="store_true", help="reemplaza un config existente")
+    p_init = sub.add_parser("init", parents=[common], help="create the project's .agents/config.json")
+    p_init.add_argument("project", nargs="?", help="project name (default: the cwd basename)")
+    p_init.add_argument("--path", help="project folder (default: cwd)")
+    p_init.add_argument("--force", action="store_true", help="replace an existing config")
 
-    p_use = sub.add_parser("use", parents=[common], help="promueve skills del hub al proyecto")
+    p_use = sub.add_parser("use", parents=[common], help="promote hub skills into the project")
     p_use.add_argument("skills", nargs="+")
-    p_use.add_argument("--project", help="carpeta del proyecto (default: resolucion tipo engram)")
+    p_use.add_argument("--project", help="project folder (default: engram-style resolution)")
 
-    p_unuse = sub.add_parser("unuse", parents=[common], help="saca skills del scope del proyecto")
+    p_unuse = sub.add_parser("unuse", parents=[common], help="drop skills from the project scope")
     p_unuse.add_argument("skills", nargs="+")
     p_unuse.add_argument("--project")
 
-    p_pstat = sub.add_parser("project-status", parents=[common], help="salud del scope de proyecto")
+    p_pstat = sub.add_parser("project-status", parents=[common], help="health of the project scope")
     p_pstat.add_argument("--project")
     return ap
 
@@ -3903,7 +3930,7 @@ def _onboard(hub: Hub, args) -> dict | int:
         ans = ""
         try:
             if sys.stdin.isatty() and not args.json:
-                ans = input("Unificar TODOS los harnesss o solo el actual? [all/current] (all): ")
+                ans = input("Unify ALL harnesses or only the current one? [all/current] (all): ")
         except (EOFError, OSError):
             ans = ""
         scope = "current" if ans.strip().lower().startswith("c") else "all"
@@ -4160,15 +4187,15 @@ def human_output(args, result: dict) -> str | None:
     if cmd == "onboard":
         return (
             f"scope: {result['scope']}"
-            + (f" ({result['harness']})" if result.get("harness") else " (todos los harnesss)")
+            + (f" ({result['harness']})" if result.get("harness") else " (all harnesses)")
             + f"  | hub: {result['hub']}\n"
-            + "harnesss con skills native:\n"
+            + "harnesses with native skills:\n"
             + ("\n".join(f"  {h['app']:16} {h['native']:>4} native" for h in result["harnesses"] if h["native"])
-               or "  (ninguno)")
-            + f"\nplan: {result['summary']['import']} importar | {result['summary']['dedupe']} duplicadas | "
-            f"{result['summary']['conflict']} en conflicto"
-            + (f"\nllm: {result['llm']['model']} ({result['llm']['aplicadas']} skills clasificadas)"
-               if result.get("llm") else "\nllm: no usada")
+               or "  (none)")
+            + f"\nplan: {result['summary']['import']} import | {result['summary']['dedupe']} duplicate | "
+            f"{result['summary']['conflict']} conflict"
+            + (f"\nllm: {result['llm']['model']} ({result['llm']['aplicadas']} skills classified)"
+               if result.get("llm") else "\nllm: not used")
             + (f"\nllm_error: {result['llm_error']}" if result.get("llm_error") else "")
             + "\n"
             + "\n".join(
@@ -4177,11 +4204,11 @@ def human_output(args, result: dict) -> str | None:
                 + (f"  ({a['reason']})" if a.get("reason") else "")
                 for a in result["actions"][:40]
             )
-            + (f"\n  ... and {len(result['actions']) - 40} mas" if len(result["actions"]) > 40 else "")
+            + (f"\n  ... and {len(result['actions']) - 40} more" if len(result["actions"]) > 40 else "")
             + ("\n\napplied: " + str(len(result["applied"]["imported"])) + " imported, "
-               + str(len(result["applied"]["skipped"])) + " salteadas, "
+               + str(len(result["applied"]["skipped"])) + " skipped, "
                + str(len(result["applied"]["failed"])) + " failed"
-               if result.get("applied") else "\n(solo plan: corre con --apply para ejecutarlo)")
+               if result.get("applied") else "\n(plan only: run with --apply to execute it)")
         )
 
     if cmd == "status":
@@ -4201,13 +4228,13 @@ def human_output(args, result: dict) -> str | None:
 
     if cmd == "init":
         if result.get("ok"):
-            return f"proyecto: {result['project_name']}  ({result['config']})"
-        return result.get("error", "no se pudo inicializar")
+            return f"project: {result['project_name']}  ({result['config']})"
+        return result.get("error", "could not initialize")
 
     if cmd == "use":
         return (
-            f"proyecto: {result['project_name']} ({result['project']})\n"
-            f"promoted: {len(result['created'])} nuevas, {len(result['already_present'])} already present\n"
+            f"project: {result['project_name']} ({result['project']})\n"
+            f"promoted: {len(result['created'])} new, {len(result['already_present'])} already present\n"
             + (f"unknown in hub: {', '.join(result['unknown'])}\n" if result["unknown"] else "")
             + (f"occupied without link: {', '.join(result['ocupadas_sin_enlace'])}\n"
                if result["ocupadas_sin_enlace"] else "")
@@ -4216,16 +4243,16 @@ def human_output(args, result: dict) -> str | None:
 
     if cmd == "unuse":
         lines = [
-            f"proyecto: {result['project']}",
+            f"project: {result['project']}",
             f"removed: {len(result['removed'])}",
         ]
         if result["absent"]:
-            lines.append(f"no estaban: {', '.join(result['absent'])}")
+            lines.append(f"not in scope: {', '.join(result['absent'])}")
         return "\n".join(lines)
 
     if cmd == "project-status":
         lines = [
-            f"proyecto: {result['project_name']} ({result['project']})  resolucion: {result['resolucion']}",
+            f"project: {result['project_name']} ({result['project']})  resolution: {result['resolucion']}",
             f"promoted: {result['promoted']} | healthy {len(result['healthy'])} | "
             f"stale {len(result['stale'])} | broken {len(result['broken'])} | "
             f"missing link {len(result['missing_links'])}",
@@ -4235,13 +4262,13 @@ def human_output(args, result: dict) -> str | None:
             ("broken", result["broken"]),
             ("missing links", result["missing_links"]),
             ("unregistered links", result["links_sin_registrar"]),
-            ("local duplicates (estan en el hub y ademas copiadas)", result["local_duplicates"]),
+            ("local duplicates (in the hub and also copied)", result["local_duplicates"]),
             ("local only", result["local_only"]),
         ):
             if items:
                 lines.append(f"{label}: {', '.join(items)}")
         if not result["tiene_config"]:
-            lines.append("sin .agents/config.json (corre `init` para fijar el nombre)")
+            lines.append("no .agents/config.json (run `init` to pin the name)")
         return "\n".join(lines)
 
     return None

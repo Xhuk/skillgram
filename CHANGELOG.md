@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased — the onboarding path works again, and the CLI speaks one language
+
+Four defects found while reviewing the CLI surface (the code `main` runs exactly once, and whose
+reporters read keys that must exist). None of them is a feature.
+
+- **`onboard --apply` was dead**: `apply_onboard` and `llm_refine_plan` read a `categoria` key that
+  `build_onboard_plan` never writes (`category`), so the flagship command raised `KeyError` on the
+  first import — with and without an LLM. The plan now carries one spelling of each key
+  (`category`, `reason`), and the human report shows the reason it was hiding before.
+- **`onboard` exited 1 on a healthy plan**: the plan had no `ok`, so `main` read `False`. A plan is
+  a result, not an error — `precedence` and `bootstrap` already behaved that way. The `--apply` run
+  still exits 1 when an import fails.
+- **`--hub`, `--json` and `--quiet` only worked after the subcommand**: `skillgram --hub X status`
+  died inside argparse (`invalid choice`). They are attached to the top-level parser now, with the
+  subparser copies at `SUPPRESS` so they cannot overwrite the value already parsed.
+- **The CLI is English again** (0.6.0 promised it): the Spanish strings that had crept back into
+  `--help`, the doctor recommendations, the onboard report and every error/skip message are gone.
+  Comments and docstrings were never part of that promise and stay as they are. The legacy Spanish
+  **JSON keys** (`resolucion`, `tiene_config`, `llm_usada`, `aplicadas`, `reemplazo`, `creados`,
+  `arreglados`, `drift_antes`, `drift_despues`, `nativos_sin_tocar`, `ocupadas_sin_enlace`,
+  `links_sin_registrar`, `tipo`) are untouched on purpose: renaming them breaks consumers and
+  belongs to a version, not to a cleanup.
+
+107 stdlib tests.
+
 ## 1.4.0 — governance is the product, and the loop is measurable
 
 Alignment pass: the tool was described as plumbing (links, sync, hubs) while the part that is
