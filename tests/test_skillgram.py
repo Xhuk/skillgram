@@ -207,6 +207,49 @@ class TestOnboard(HomeCase):
                 if v is not None:
                     os.environ[k] = v
 
+    def test_plan_is_a_healthy_result(self):
+        # el plan no es un error: main() deriva el exit code de `ok`
+        make_skill(self.home / ".fakeagent", "skills", "native-one")
+        plan = skillgram.build_onboard_plan(skillgram.Hub(self.hub_root), scope="all")
+        self.assertTrue(plan["ok"])
+
+    def test_duplicate_actions_say_why(self):
+        make_skill(self.home / ".a", "skills", "twin")
+        make_skill(self.home / ".b", "skills", "twin")
+        plan = skillgram.build_onboard_plan(skillgram.Hub(self.hub_root), scope="all")
+        dedupe = [a for a in plan["actions"] if a["action"] == "dedupe"]
+        self.assertTrue(dedupe)
+        self.assertTrue(dedupe[0]["reason"].startswith("identica a"))
+
+    def test_apply_imports_the_native_skill(self):
+        make_skill(self.home / ".fakeagent", "skills", "native-one")
+        hub = skillgram.Hub(self.hub_root)
+        plan = skillgram.build_onboard_plan(hub, scope="all")
+        applied = skillgram.apply_onboard(hub, plan)
+        self.assertEqual(applied["failed"], [])
+        self.assertEqual(len(applied["imported"]), 1)
+        dest = Path(applied["imported"][0]["to"])
+        self.assertTrue((dest / "SKILL.md").is_file())
+
+    def test_llm_refine_plan_writes_the_keys_the_plan_uses(self):
+        make_skill(self.hub_root, "design-ui", "archify")
+        make_skill(self.home / ".fakeagent", "skills", "native-one")
+        plan = skillgram.build_onboard_plan(skillgram.Hub(self.hub_root), scope="all")
+        reply = json.dumps({"skills": [{"name": "native-one", "harness": "fakeagent",
+                                        "category": "design-ui", "flavor": "generic",
+                                        "reason": "same tool, other wording"}]})
+        original = skillgram.llm_chat
+        skillgram.llm_chat = lambda cfg, system, user: reply
+        try:
+            refined = skillgram.llm_refine_plan(skillgram.Hub(self.hub_root), plan, {"model": "test"})
+        finally:
+            skillgram.llm_chat = original
+        action = refined["actions"][0]
+        self.assertEqual(action["category"], "design-ui")
+        self.assertEqual(action["reason"], "same tool, other wording")
+        self.assertNotIn("categoria", action)
+        self.assertNotIn("motivo", action)
+
 
 
 
@@ -1152,6 +1195,32 @@ class TestCliSurface(HomeCase):
         code, out = self.run_cli("status", "--hub", self.hub_root)
         self.assertEqual(code, 0)
         self.assertTrue(out[0].startswith("hub: "))
+
+    def test_onboard_plan_exits_zero_and_carries_ok(self):
+        make_skill(self.home / ".fakeagent", "skills", "native-one")
+        code, out = self.run_cli("onboard", "--no-llm", "--json", "--hub", self.hub_root)
+        self.assertEqual(code, 0)
+        payload = self.json_line(out)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["summary"]["import"], 1)
+
+    def test_onboard_apply_imports_and_reports_the_dest(self):
+        make_skill(self.home / ".fakeagent", "skills", "native-one")
+        code, out = self.run_cli("onboard", "--no-llm", "--apply", "--json", "--hub", self.hub_root)
+        self.assertEqual(code, 0)
+        payload = self.json_line(out)
+        self.assertEqual(len(payload["applied"]["imported"]), 1)
+        self.assertTrue((Path(payload["applied"]["imported"][0]["to"]) / "SKILL.md").is_file())
+
+    def test_onboard_human_report_shows_the_action_reason(self):
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        make_skill(self.home / ".fakeagent", "skills", "deploy")
+        code, out = self.run_cli("onboard", "--no-llm", "--hub", self.hub_root)
+        self.assertEqual(code, 0)
+        text = "\n".join(out)
+        self.assertIn("harnesss con skills native:", text)
+        self.assertIn("1 en conflicto", text)
+        self.assertIn("a skill with that name already exists in the hub", text)
 
 if __name__ == "__main__":
     unittest.main()

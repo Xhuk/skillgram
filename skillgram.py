@@ -1049,13 +1049,14 @@ def build_onboard_plan(hub: Hub, scope: str = "all", harness: str | None = None)
             }
             if nat["hash"] in seen:
                 action["action"] = "dedupe"
-                action["motivo"] = f"identica a {seen[nat['hash']]}"
+                action["reason"] = f"identica a {seen[nat['hash']]}"
             elif nat["in_hub"]:
                 action["action"] = "conflict"
-                action["motivo"] = "a skill with that name already exists in the hub"
+                action["reason"] = "a skill with that name already exists in the hub"
             seen.setdefault(nat["hash"], f"{row['app']}/{nat['name']}")
             actions.append(action)
     return {
+        "ok": True,
         "op": "onboard-plan",
         "hub": str(hub.root),
         "scope": scope,
@@ -1087,7 +1088,7 @@ def llm_refine_plan(hub: Hub, plan: dict, cfg: dict) -> dict:
         {
             "name": a["skill"],
             "harness": a["harness"],
-            "current_category": a["categoria"],
+            "current_category": a["category"],
             "summary": _skill_summary(Path(a["from"])),
         }
         for a in plan["actions"]
@@ -1117,16 +1118,16 @@ def llm_refine_plan(hub: Hub, plan: dict, cfg: dict) -> dict:
             continue
         cat = str(item.get("category", "")).strip()
         if cat and cat in hub.tipos():
-            action["categoria"] = cat
+            action["category"] = cat
         flavor = str(item.get("flavor", "")).strip().lower()
         if flavor:
             action["flavor"] = flavor
         dup = str(item.get("duplicate_of", "")).strip()
         if dup and dup != action["skill"] and action["action"] == "import":
             action["action"] = "dedupe"
-            action["motivo"] = f"la LLM dice que es lo mismo que {dup}"
+            action["reason"] = f"la LLM dice que es lo mismo que {dup}"
         if item.get("reason"):
-            action["motivo"] = action["motivo"] or str(item["reason"])[:200]
+            action["reason"] = action["reason"] or str(item["reason"])[:200]
         applied += 1
     plan["llm"] = {"model": cfg["model"], "aplicadas": applied}
     return plan
@@ -1140,7 +1141,7 @@ def apply_onboard(hub: Hub, plan: dict) -> dict:
             skipped.append(f"{action['harness']}/{action['skill']} ({action['action']})")
             continue
         src = Path(action["from"])
-        dest = hub.root / action["categoria"] / action["skill"]
+        dest = hub.root / action["category"] / action["skill"]
         if dest.exists():
             failed.append(f"{action['skill']}: already exists: {dest}")
             continue
