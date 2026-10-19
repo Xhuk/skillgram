@@ -11,13 +11,18 @@
 
 <h1 align="center">skillgram</h1>
 
-<p align="center"><strong>Skill management for AI agents:</strong> one skill library, linked into every coding agent.<br>
-No copies, no drift, no "which folder does this harness read?".</p>
+<p align="center"><strong>Skill governance for AI agents:</strong> one library, a contract that gates what enters
+it, and every coding agent reading the same thing.<br>
+Links instead of copies. No drift, and no "which folder does this harness read?".</p>
 
-skillgram is a **skill hub** — a registry of `SKILL.md` files that actually lives in one place
-on disk — plus the admin layer that keeps every agent pointing at it. Claude Code, Codex,
-Cursor, Hermes, Reasonix, Gemini CLI, OpenCode, Kiro, Qwen Code, Aider, Copilot and anything
-else that reads skills all see the same library.
+skillgram is a **registry of `SKILL.md` files** that actually lives in one place on disk, plus the
+layer that governs it: a **contract** every skill has to pass (`lint --contract`), **provenance**
+for each one (`SKILLMETA.json`: who, when, hash, source), **declared usage** (`touch`, `list`) and a
+**ledger** of what has been propagated where. Claude Code, Codex, Cursor, Hermes, Reasonix, Gemini
+CLI, OpenCode, Kiro, Qwen Code, Aider, Copilot and anything else that reads skills see the same
+library.
+
+Links are the mechanism. Governance is the product.
 
 ```
 ~/.agents/skills/<category>/<skill>/SKILL.md   the hub (the only real copy)
@@ -26,9 +31,21 @@ else that reads skills all see the same library.
 %APPDATA%/Reasonix/skills/<skill>              -> junction to the hub
 ```
 
-**No work skills are bundled** — it is the plumbing, not the content. The only skill in this
-repo is [`skills/skillgram-report`](skills/skillgram-report/SKILL.md), which teaches an agent
-how to report a bug or a gap.
+**No work skills are bundled** — it is the plumbing plus the governance, not the content. The only
+skill in this repo is [`skills/skillgram-report`](skills/skillgram-report/SKILL.md), which teaches
+an agent how to report a bug or a gap.
+
+### The four levers (1.3)
+
+| Lever | Command | What it answers |
+|---|---|---|
+| **Contract** | `lint --contract`, `new` | does this skill state a trigger, rules, decisions, steps and an output — or is it a paragraph? |
+| **Provenance** | `SKILLMETA.json` | who wrote it, when, from where, and the hash that makes `update` possible |
+| **Declared usage** | `touch`, `list --used` / `--unused` | which skills were actually used in this project, and which never were |
+| **Policy** | per-harness exclude *(planned)*, `retire`, project scope | who is allowed to see this skill, and how it leaves without being deleted |
+
+The honest limit, stated once: skillgram cannot see what an agent *reads*. Usage is what the agent
+declares (`skillgram touch` / the `skillgram_touch` MCP tool), and everything built on it says so.
 
 ### What this is, in other words
 
@@ -230,12 +247,12 @@ and the skill that walks an agent through them:
 | `index` / `search` / `missing` / `demand` | find, or learn what is missing. |
 | `review` / `pin` / `retire` | lifecycle. |
 | `export` / `import` / `diff` / `git` | move a hub around. |
-| `mcp` | stdio MCP server (`--read-only`). |
+| `mcp` | stdio MCP server, 7 tools (`--read-only` to drop the write ones). |
 | `lint` | quality gate: frontmatter, the five contract sections, credentials, placeholders. `--contract` makes the sections mandatory. |
 | `new` | scaffold a skill from the contract (`SKILL.md` + `SKILLMETA.json`); `lint` decides whether it ships. |
 | `watch` / `daemon` / `install-autostart` | keep it in sync by itself. |
 
-`skillgram --help` lists all of them (34); `skillgram <command> --help` is the contract for
+`skillgram --help` lists all of them (37); `skillgram <command> --help` is the contract for
 one. Every command prints **exactly one JSON line** on stdout (`--json` for the human ones too).
 Exit code `0` healthy, `1` drift/error, `2` bad invocation.
 
@@ -257,7 +274,7 @@ carries a `SKILLMETA.json` with who wrote it, when, and the content hash. Withou
 is no `update` later, only overwrite.
 
 ```json
-{"ok":true,"op":"status","version":"1.3.0","hub":"C:\\Users\\me\\.agents\\skills","skills":842,"categories":18,"nested":12,"agents":50,"drift":0,"watching":false,"missing":0,"mispointed":0,"dead":0,"skipped":2}
+{"ok":true,"op":"status","version":"1.4.0","hub":"C:\\Users\\me\\.agents\\skills","skills":842,"categories":18,"nested":12,"agents":50,"drift":0,"watching":false,"missing":0,"mispointed":0,"dead":0,"skipped":2}
 ```
 
 ## Known gaps (documented, not implemented)

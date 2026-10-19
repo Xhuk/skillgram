@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.4.0 — governance is the product, and the loop is measurable
+
+Alignment pass: the tool was described as plumbing (links, sync, hubs) while the part that is
+actually hard to replicate is the governance. Two new commands, two new MCP tools, and the project
+now says what it is.
+
+- **`skillgram list [--category C] [--project P] [--used|--unused] [--limit N]`** — what is in the
+  hub, with provenance (`by`, `source.kind`) and, when a project is given, how many times each
+  skill was declared as used. This is the view a user needs to answer "do I even want this one".
+- **`skillgram touch <skill>... [--by <harness>]`** — the agent declares "I used these for this
+  task". Recorded in the project manifest (`last_used`, `use_count`, `last_used_by`) and reported
+  honestly when a skill is not in scope.
+- **MCP grows to 7 tools**: `skillgram_touch` and `skillgram_list` join search / missing / use /
+  status / propose. The agent can now close the loop it opens by asking the hub.
+- **The honest limit, stated where it belongs**: skillgram cannot see what an agent reads. Usage is
+  what the agent declares, and every surface that shows usage says so.
+- **Positioning**: README, landing page, GitHub description and topics moved from "skill management
+  / hub of links" to **skill governance** — contract, provenance, declared usage, policy — with
+  links as the mechanism. "The four levers" table added to the README.
+
+92 stdlib tests.
+
 ## 1.3.0 — the skill contract, and a gate that actually checks it
 
 `propose` asked the model for five sections; `lint` verified **none** of them. A skill could be

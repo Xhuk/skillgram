@@ -439,6 +439,55 @@ class TestNew(HomeCase):
         self.assertIn("unknown category", skillgram.new_skill(hub, "x", category="nope")["error"])
 
 
+class TestListAndTouch(HomeCase):
+    """The governance view: what is in the hub and what was declared as used."""
+
+    def _hub_with_two(self):
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        make_skill(self.hub_root, "design-ui", "archify")
+        skillgram.write_skill_meta(self.hub_root / "infra-ops" / "deploy",
+                                   {"by": "human", "source": {"kind": "authored"}})
+        return skillgram.Hub(self.hub_root)
+
+    def test_list_all_and_by_category(self):
+        hub = self._hub_with_two()
+        self.assertEqual(skillgram.list_skills(hub)["skills"], 2)
+        infra = skillgram.list_skills(hub, category="infra-ops")
+        self.assertEqual([r["skill"] for r in infra["rows"]], ["deploy"])
+        self.assertEqual(infra["rows"][0]["source"], "authored")
+        self.assertEqual(infra["rows"][0]["by"], "human")
+
+    def test_used_filter_reads_the_project_manifest(self):
+        hub = self._hub_with_two()
+        proj = self.tmp / "proj"
+        skillgram.init_project("proj", str(proj))
+        skillgram.promote(hub, ["deploy", "archify"], proj)
+        self.assertEqual(skillgram.list_skills(hub, project=proj, used="used")["skills"], 0)
+        skillgram.touch_usage(proj, ["deploy"], by="reasonix")
+        used = skillgram.list_skills(hub, project=proj, used="used")
+        self.assertEqual([r["skill"] for r in used["rows"]], ["deploy"])
+        self.assertEqual(used["rows"][0]["use_count"], 1)
+        self.assertEqual(skillgram.list_skills(hub, project=proj, used="unused")["skills"], 1)
+
+    def test_touch_reports_what_is_not_in_scope(self):
+        hub = self._hub_with_two()
+        proj = self.tmp / "proj"
+        skillgram.init_project("proj", str(proj))
+        skillgram.promote(hub, ["deploy"], proj)
+        res = skillgram.touch_usage(proj, ["deploy", "ghost"], by="codex")
+        self.assertEqual(res["touched"], ["deploy"])
+        self.assertEqual(res["not_in_scope"], ["ghost"])
+        self.assertIn("use", res["hint"])
+
+    def test_mcp_exposes_touch_and_list(self):
+        names = [t["name"] for t in skillgram.MCP_TOOLS]
+        self.assertIn("skillgram_touch", names)
+        self.assertIn("skillgram_list", names)
+        self.assertEqual(len(names), 7)
+        out = skillgram.mcp_call(self._hub_with_two(), "skillgram_list", {"category": "design-ui"})
+        self.assertEqual([r["skill"] for r in out["rows"]], ["archify"])
+
+
 class TestBootstrap(HomeCase):
     def test_signals_from_files(self):
         proj = self.tmp / "app"
@@ -592,7 +641,7 @@ class TestMcp(HomeCase):
     def test_tools_list_and_call(self):
         make_skill(self.hub_root, "infra-ops", "deploy", "deploy docker")
         hub = skillgram.Hub(self.hub_root)
-        self.assertEqual(len(skillgram.MCP_TOOLS), 5)
+        self.assertEqual(len(skillgram.MCP_TOOLS), 7)
         res = skillgram.mcp_call(hub, "skillgram_missing", {"query": "docker deploy"})
         self.assertTrue(res["found"])
         bad = skillgram.mcp_call(hub, "nope", {})
@@ -612,7 +661,7 @@ class TestMcp(HomeCase):
         skillgram.mcp_serve(hub, stdin=stdin, stdout=stdout)
         lines = [json.loads(line) for line in stdout.getvalue().strip().splitlines()]
         self.assertEqual(lines[0]["result"]["serverInfo"]["name"], "skillgram")
-        self.assertEqual(len(lines[1]["result"]["tools"]), 5)
+        self.assertEqual(len(lines[1]["result"]["tools"]), 7)
         self.assertIn("content", lines[2]["result"])
 class FakeCli:
     """Stands in for `reasonix|codex|claude|hermes mcp ...` so no real config is touched."""

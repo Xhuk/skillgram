@@ -77,7 +77,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto
@@ -2069,17 +2069,66 @@ def touch_usage(project: Path, names: list, by: str = "agent") -> dict:
     """Marca uso en el manifest del proyecto (last_used / use_count)."""
     manifest = _read_manifest(project)
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
-    touched = []
+    touched, absent = [], []
     for name in names:
         entry = manifest["skills"].get(name)
         if not entry:
+            absent.append(name)
             continue
         entry["last_used"] = stamp
         entry["use_count"] = int(entry.get("use_count", 0)) + 1
         entry["last_used_by"] = by
         touched.append(name)
     _write_manifest(project, manifest)
-    return {"ok": True, "op": "use", "touched": touched}
+    out = {"ok": bool(touched), "op": "touch", "by": by, "touched": touched}
+    if absent:
+        out["not_in_scope"] = absent
+        out["hint"] = "run `skillgram use <skill>` first: usage is declared per project"
+    return out
+
+
+def list_skills(hub: Hub, category: str | None = None, project: Path | None = None,
+                used: str | None = None, limit: int | None = None) -> dict:
+    """What is in the hub, and what has actually been used in a project.
+
+    `used` is `used` / `unused` when a project is given: the only usage signal
+    skillgram has is what the agent declares with `touch` (or `use`), because a
+    harness reading a file is invisible from here.
+    """
+    known = hub.skills()
+    usage = _read_manifest(project)["skills"] if project is not None else {}
+    rows = []
+    for name, tipo in sorted(known.items()):
+        if category and tipo != category:
+            continue
+        meta = skill_meta(hub.root / tipo / name)
+        entry = usage.get(name, {})
+        count = int(entry.get("use_count", 0) or 0)
+        if used == "used" and not count:
+            continue
+        if used == "unused" and count:
+            continue
+        source = meta.get("source") or {}
+        rows.append({
+            "skill": name,
+            "category": tipo,
+            "by": meta.get("by", ""),
+            "source": source.get("kind", ""),
+            "use_count": count,
+            "last_used": entry.get("last_used", ""),
+        })
+    total = len(rows)
+    if limit:
+        rows = rows[:limit]
+    return {
+        "ok": True,
+        "op": "list",
+        "category": category,
+        "project": str(project) if project is not None else None,
+        "used": used,
+        "skills": total,
+        "rows": rows,
+    }
 
 
 def pin_skill(project: Path, names: list, pinned: bool = True) -> dict:
@@ -2231,6 +2280,18 @@ MCP_TOOLS = [
                                                      "apply": {"type": "boolean", "default": False},
                                                      "project": {"type": "string"}},
                      "required": ["need"]}},
+    {"name": "skillgram_touch",
+     "description": "Declare that you used these skills for the current task. This is the only usage signal skillgram can see.",
+     "inputSchema": {"type": "object", "properties": {"skills": {"type": "array", "items": {"type": "string"}},
+                                                     "by": {"type": "string"},
+                                                     "project": {"type": "string"}},
+                     "required": ["skills"]}},
+    {"name": "skillgram_list",
+     "description": "List the hub (optionally one category, optionally only used/unused in this project).",
+     "inputSchema": {"type": "object", "properties": {"category": {"type": "string"},
+                                                     "used": {"type": "string", "enum": ["used", "unused"]},
+                                                     "project": {"type": "string"},
+                                                     "limit": {"type": "integer"}}}},
 ]
 
 
@@ -2250,6 +2311,15 @@ def mcp_call(hub: Hub, name: str, args: dict) -> dict:
         proj = resolve_project(args.get("project"))
         return propose_skill(hub, Path(proj["path"]), str(args.get("need", "")),
                              llm_config(), apply=bool(args.get("apply")))
+    if name == "skillgram_touch":
+        proj = resolve_project(args.get("project"))
+        return touch_usage(Path(proj["path"]), [str(s) for s in args.get("skills", [])],
+                           by=str(args.get("by") or "mcp"))
+    if name == "skillgram_list":
+        proj = resolve_project(args.get("project")) if args.get("project") else None
+        return list_skills(hub, category=args.get("category"),
+                           project=Path(proj["path"]) if proj else None,
+                           used=args.get("used"), limit=args.get("limit"))
     return {"ok": False, "error": f"unknown tool: {name}"}
 
 
@@ -3737,6 +3807,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_new.add_argument("name", help="kebab-case name; it becomes the folder")
     p_new.add_argument("--category", help="existing hub category (default: imported)")
     p_new.add_argument("--by", default="human", help="who authors it (default: human)")
+    p_list = sub.add_parser("list", parents=[common], help="what is in the hub (and what was used in this project)")
+    p_list.add_argument("--category", help="only this category")
+    p_list.add_argument("--project", help="read usage from this project scope")
+    p_list.add_argument("--used", choices=["used", "unused"], help="only used / never used in that project")
+    p_list.add_argument("--limit", type=int, help="show at most N")
+    p_touch = sub.add_parser("touch", parents=[common], help="declare that you used these skills (the only usage signal)")
+    p_touch.add_argument("skills", nargs="+")
+    p_touch.add_argument("--project", help="project scope (default: engram-style resolution)")
+    p_touch.add_argument("--by", default="agent", help="who used it (harness or agent, default: agent)")
     p_dem = sub.add_parser("demand", parents=[common], help="queries the hub could not cover (real roadmap)")
     p_dem.add_argument("--limit", type=int, default=20)
     p_git = sub.add_parser("git", parents=[common], help="hub as a git repo: status | init | pull | push")
@@ -3799,6 +3878,15 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "precedence":
         result = apply_precedence(hub, apply=args.apply,
                                   only=normalize_harness(args.harness) if args.harness else None)
+    elif args.cmd == "list":
+        proj = resolve_project(args.project) if args.project else None
+        result = list_skills(hub, category=args.category,
+                             project=Path(proj["path"]) if proj else None,
+                             used=args.used, limit=args.limit)
+    elif args.cmd == "touch":
+        proj = resolve_project(args.project)
+        result = touch_usage(Path(proj["path"]), args.skills, by=args.by)
+        result["project"] = str(proj["path"])
     elif args.cmd == "new":
         result = new_skill(hub, args.name, category=args.category, author=args.by)
     elif args.cmd == "lint":
@@ -4011,6 +4099,15 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "precedence":
         result = apply_precedence(hub, apply=args.apply,
                                   only=normalize_harness(args.harness) if args.harness else None)
+    elif args.cmd == "list":
+        proj = resolve_project(args.project) if args.project else None
+        result = list_skills(hub, category=args.category,
+                             project=Path(proj["path"]) if proj else None,
+                             used=args.used, limit=args.limit)
+    elif args.cmd == "touch":
+        proj = resolve_project(args.project)
+        result = touch_usage(Path(proj["path"]), args.skills, by=args.by)
+        result["project"] = str(proj["path"])
     elif args.cmd == "new":
         result = new_skill(hub, args.name, category=args.category, author=args.by)
     elif args.cmd == "lint":
