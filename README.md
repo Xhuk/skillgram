@@ -41,11 +41,13 @@ an agent how to report a bug or a gap.
 |---|---|---|
 | **Contract** | `lint --contract`, `new` | does this skill state a trigger, rules, decisions, steps and an output — or is it a paragraph? |
 | **Provenance** | `SKILLMETA.json` | who wrote it, when, from where, and the hash that makes `update` possible |
-| **Declared usage** | `touch`, `list --used` / `--unused` | which skills were actually used in this project, and which never were |
+| **Declared usage** | `touch`, `list --used` / `--unused` | which skills were actually used in this project, and which never were — `by_harness` says from which agent, so changing harness does not lose the record |
 | **Policy** | per-harness exclude *(planned)*, `retire`, project scope | who is allowed to see this skill, and how it leaves without being deleted |
 
 The honest limit, stated once: skillgram cannot see what an agent *reads*. Usage is what the agent
 declares (`skillgram touch` / the `skillgram_touch` MCP tool), and everything built on it says so.
+The block `mount` injects tells every agent to read that record first and to declare usage after,
+which is how a project keeps its memory when you switch harness.
 
 ### What this is, in other words
 

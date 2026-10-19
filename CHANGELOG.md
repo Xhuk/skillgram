@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased — the onboarding path works again, and the CLI speaks one language
+## 1.4.1 — the loop is feedable, the CLI works, and the harness is not the identity
 
 Four defects found while reviewing the CLI surface (the code `main` runs exactly once, and whose
-reporters read keys that must exist). None of them is a feature.
+reporters read keys that must exist), plus the two surfaces that had never run, plus the hole that
+made 1.4.0's "declared usage" unfillable.
 
 - **`onboard --apply` was dead**: `apply_onboard` and `llm_refine_plan` read a `categoria` key that
   `build_onboard_plan` never writes (`category`), so the flagship command raised `KeyError` on the
@@ -22,8 +23,24 @@ reporters read keys that must exist). None of them is a feature.
   `arreglados`, `drift_antes`, `drift_despues`, `nativos_sin_tocar`, `ocupadas_sin_enlace`,
   `links_sin_registrar`, `tipo`) are untouched on purpose: renaming them breaks consumers and
   belongs to a version, not to a cleanup.
+- **The injected protocol now closes the loop.** It says to read the project's record *before*
+  choosing (`skillgram list --project . --used`, MCP `skillgram_list`) and to declare usage *after*
+  using a skill (`skillgram touch <skill> --by <harness>`, MCP `skillgram_touch`). Before, the block
+  never mentioned `touch`, so `review`, `pin` and `list --used` could only ever be empty.
+- **It also taught `skillgram add <url>`, which never existed** — every mounted `AGENTS.md`/
+  `CLAUDE.md` told the agent to run a command that fails. Rule 8 now points at `import`/`adopt`.
+  A test parses the block and fails if it names a command the parser does not have.
+- **The harness is a mask; the project is the identity.** `touch` now tallies per harness
+  (`by_harness`) and `list` exposes `last_used_by` + `by_harness`, so switching agent does not lose
+  which skills the project was living on: the next harness reads the same manifest.
+- **`skillgram --version`** exists (it exited 2 with "arguments are required: cmd", the first thing
+  a new user types).
+- **`install` → MCP registration now has a test against a real spawn** (the documented
+  `SKILLGRAM_MCP_CLI_<HARNESS>` switch behind a stub): probe -> add -> probe, and mutating it to
+  trust the exit code fails the test. **`daemon` has one too** (JSON line in, JSON line out, `quit`
+  exits 0) — it is how edgePass talks to skillgram and it had none.
 
-107 stdlib tests.
+116 stdlib tests; 4 junction tests skip on POSIX.
 
 ## 1.4.0 — governance is the product, and the loop is measurable
 

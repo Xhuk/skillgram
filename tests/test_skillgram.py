@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -1235,6 +1236,79 @@ class TestCliSurface(HomeCase):
         code, out = self.run_cli("--hub", self.tmp / "nowhere", "--json", "status", "--hub", self.hub_root)
         self.assertEqual(code, 0)
         self.assertEqual(self.json_line(out)["skills"], 1)
+
+
+class TestProtocolBlock(HomeCase):
+    """The block is what agents read in every mounted repo, so a command it teaches
+    must exist. It used to teach `skillgram add <url>`, which the parser never had:
+    every AGENTS.md told the agent to run a command that fails.
+    """
+
+    def block(self) -> str:
+        return skillgram.protocol_block(skillgram.Hub(self.hub_root))
+
+    def test_every_command_it_teaches_exists(self):
+        sub = next(a for a in skillgram.build_parser()._actions if a.dest == "cmd")
+        mentioned = set(re.findall(r"`skillgram ([a-z][a-z-]*)", self.block()))
+        self.assertTrue(mentioned, "the block should name the commands it wants")
+        self.assertEqual(sorted(mentioned - set(sub.choices)), [],
+                         "the protocol teaches a command the CLI does not have")
+
+    def test_it_teaches_the_loop_that_feeds_the_record(self):
+        text = self.block()
+        # touch is the only usage signal: without it `review`/`pin`/`list --used` are empty
+        self.assertIn("`skillgram touch", text)
+        # and the previous harness's record has to be readable from the next one
+        self.assertIn("`skillgram list --project . --used`", text)
+        self.assertIn("harness-agnostic", text)
+
+    def test_the_block_survives_injection_unchanged(self):
+        proj = self.tmp / "proj"
+        proj.mkdir()
+        (proj / "AGENTS.md").write_text("# repo\n\ntext\n", encoding="utf-8")
+        skillgram.inject_protocol(skillgram.Hub(self.hub_root), proj, apply=True)
+        written = (proj / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn(skillgram.PROTOCOL_BEGIN, written)
+        self.assertIn("`skillgram touch", written)
+        # idempotent: a second pass does not duplicate the block
+        skillgram.inject_protocol(skillgram.Hub(self.hub_root), proj, apply=True)
+        again = (proj / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertEqual(again.count(skillgram.PROTOCOL_BEGIN), 1)
+
+
+class TestUsageAcrossHarnesses(HomeCase):
+    """Switching harness must not lose what the project was using: the record is the
+    project's, not the agent's.
+    """
+
+    def project_with_scope(self) -> Path:
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        proj = self.tmp / "proj"
+        skillgram.init_project("proj", str(proj))
+        skillgram.promote(skillgram.Hub(self.hub_root), ["deploy"], proj)
+        return proj
+
+    def test_the_record_says_which_harness_used_what(self):
+        proj = self.project_with_scope()
+        skillgram.touch_usage(proj, ["deploy"], by="claude")
+        skillgram.touch_usage(proj, ["deploy"], by="codex")
+        skillgram.touch_usage(proj, ["deploy"], by="claude")
+
+        rows = skillgram.list_skills(skillgram.Hub(self.hub_root), project=proj, used="used")["rows"]
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["use_count"], 3)
+        self.assertEqual(row["last_used_by"], "claude")
+        self.assertEqual(row["by_harness"], {"claude": 2, "codex": 1})
+
+    def test_a_new_harness_reads_the_previous_one(self):
+        proj = self.project_with_scope()
+        skillgram.touch_usage(proj, ["deploy"], by="claude")
+        # a different agent, same project: the manifest is the memory, not the session
+        unused = skillgram.list_skills(skillgram.Hub(self.hub_root), project=proj, used="unused")["rows"]
+        self.assertEqual(unused, [])
+        row = skillgram.list_skills(skillgram.Hub(self.hub_root), project=proj)["rows"][0]
+        self.assertEqual(row["by_harness"], {"claude": 1})
 
 
 class TestMcpThroughTheRealCli(HomeCase):

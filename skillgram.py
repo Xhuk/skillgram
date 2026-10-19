@@ -77,7 +77,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto
@@ -2081,6 +2081,10 @@ def touch_usage(project: Path, names: list, by: str = "agent") -> dict:
         entry["last_used"] = stamp
         entry["use_count"] = int(entry.get("use_count", 0)) + 1
         entry["last_used_by"] = by
+        # Per harness, because the harness is a mask: switching agents must not lose
+        # which skills this project has been living on.
+        tallies = entry.setdefault("by_harness", {})
+        tallies[by] = int(tallies.get(by, 0)) + 1
         touched.append(name)
     _write_manifest(project, manifest)
     out = {"ok": bool(touched), "op": "touch", "by": by, "touched": touched}
@@ -2119,6 +2123,9 @@ def list_skills(hub: Hub, category: str | None = None, project: Path | None = No
             "source": source.get("kind", ""),
             "use_count": count,
             "last_used": entry.get("last_used", ""),
+            # who used it, so another harness can pick up where the last one left off
+            "last_used_by": entry.get("last_used_by", ""),
+            "by_harness": dict(entry.get("by_harness") or {}),
         })
     total = len(rows)
     if limit:
@@ -2626,18 +2633,27 @@ def protocol_block(hub: Hub) -> str:
         "## Skills: ask the hub first (skillgram)",
         "",
         f"The project's skills live in `{hub.root}` and are mounted here by skillgram.",
+        "The hub is harness-agnostic: changing agent does not change the library, and it does",
+        "not change the record of what this project used. Read that record before choosing.",
         "",
-        "1. Before proposing or writing a skill, ask: `skillgram missing \"<capability>\"`",
+        "1. Before picking skills, read what this project has used (the previous harness was not",
+        "   a different project): `skillgram list --project . --used` or the MCP tool",
+        "   `skillgram_list`. Each row says how often and which harness used it.",
+        "2. Before proposing or writing a skill, ask: `skillgram missing \"<capability>\"`",
         "   (or the MCP tool `skillgram_missing`).",
-        "2. `found: true` -> use the skill. Read `<hub>/<category>/<skill>/SKILL.md` or invoke it by name.",
-        "3. `found: false` -> do not invent one silently. Tell the user the hub has nothing for it,",
+        "3. `found: true` -> use the skill. Read `<hub>/<category>/<skill>/SKILL.md` or invoke it by name.",
+        "4. After using one, say so: `skillgram touch <skill> --by <your harness>` (or the MCP tool",
+        "   `skillgram_touch`). That is the only usage signal skillgram has, and it is what the",
+        "   next harness will read.",
+        "5. `found: false` -> do not invent one silently. Tell the user the hub has nothing for it,",
         "   then offer `skillgram propose \"<need>\"` (draft) and wait for approval before `--apply`.",
-        "4. Never hand-write files under `.agents/skills/`: use `skillgram use <skill>...`.",
-        "5. Adding a skill to this project is `skillgram use`, not a copy.",
-        "6. Authoring a skill: `skillgram new <name> --category <c>` then `skillgram lint <name>",
+        "6. Never hand-write files under `.agents/skills/`: use `skillgram use <skill>...`.",
+        "   Adding a skill to this project is `skillgram use`, not a copy.",
+        "7. Authoring a skill: `skillgram new <name> --category <c>` then `skillgram lint <name>",
         "   --contract`. The contract is `docs/SKILL-CONTRACT.md`; `lint` is the gate.",
-        "7. A skill that comes from a link or repo is `skillgram add <url>`, never a `git clone`",
-        "   into a `skills/` folder.",
+        "8. A skill that comes from a URL or another repo is imported with `skillgram import`",
+        "   (an export made by skillgram) or `skillgram adopt` (a local folder): never a copy into",
+        "   a `skills/` folder.",
         "",
         PROTOCOL_END,
     ])
@@ -3745,6 +3761,8 @@ def build_parser() -> argparse.ArgumentParser:
     # y `skillgram status --hub X`. El parser de arriba lleva los defaults; las
     # copias de los subparsers van en SUPPRESS para no pisarlos.
     add_common_flags(ap)
+    ap.add_argument("--version", action="version", version=f"skillgram {VERSION}",
+                    help="print the version and exit")
     common = argparse.ArgumentParser(add_help=False)
     add_common_flags(common, with_defaults=False)
 
