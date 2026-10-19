@@ -4,8 +4,10 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -1233,6 +1235,191 @@ class TestCliSurface(HomeCase):
         code, out = self.run_cli("--hub", self.tmp / "nowhere", "--json", "status", "--hub", self.hub_root)
         self.assertEqual(code, 0)
         self.assertEqual(self.json_line(out)["skills"], 1)
+
+
+class TestMcpThroughTheRealCli(HomeCase):
+    """`install` delegates the MCP registration to the harness CLI, and every other
+    test injects a Python callable. That leaves the real path unproven: an actual
+    process spawn, the argv each CLI expects, and the re-probe that -- not the exit
+    code -- decides whether the registration happened.
+
+    `SKILLGRAM_MCP_CLI_<HARNESS>` is the documented switch for "this launcher owns
+    the config", so a stub behind it exercises the same code with nothing at risk.
+    """
+
+    ENV_KEYS = ("SKILLGRAM_MCP_CLI_REASONIX", "SKILLGRAM_MCP_CMD")
+
+    def setUp(self):
+        super().setUp()
+        self._env = {k: os.environ.get(k) for k in self.ENV_KEYS}
+        for key in self.ENV_KEYS:
+            os.environ.pop(key, None)
+        self.calls_log = self.tmp / "calls.log"
+        os.environ["SKILLGRAM_MCP_CLI_REASONIX"] = str(self.make_stub())
+
+    def tearDown(self):
+        for key, value in self._env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        super().tearDown()
+
+    def make_stub(self) -> Path:
+        """A launcher that behaves like `mcp get` / `mcp add` and records its argv."""
+        launch = skillgram.mcp_launch_argv()
+        marker = launch[1] if len(launch) > 1 else launch[0]
+        script = self.tmp / "stub.py"
+        script.write_text(
+            "import json, os, sys\n"
+            f"STATE = {str(self.calls_log)!r}\n"
+            f"MARKER = {marker!r}\n"
+            "argv = sys.argv[1:]\n"
+            "open(STATE, 'a', encoding='utf-8').write(json.dumps(argv) + '\\n')\n"
+            "if argv[:2] == ['mcp', 'get']:\n"
+            "    if not os.path.exists(STATE + '.registered'):\n"
+            "        print('no server named skillgram', file=sys.stderr)\n"
+            "        sys.exit(1)\n"
+            "    print('skillgram')\n"
+            "    print('  command: ' + MARKER)\n"
+            "    sys.exit(0)\n"
+            "if argv[:2] == ['mcp', 'add']:\n"
+            "    open(STATE + '.registered', 'w', encoding='utf-8').close()\n"
+            "    print('added')\n"
+            "    sys.exit(0)\n"
+            "sys.exit(0)\n",
+            encoding="utf-8",
+        )
+        # run_cli() spawns argv[0] as an executable: on Windows that is a .cmd
+        # (and run_cli routes it through `cmd /c`), on POSIX an executable script.
+        if os.name == "nt":
+            shim = self.tmp / "stub.cmd"
+            shim.write_text(f'@echo off\r\n"{sys.executable}" "{script}" %*\r\n', encoding="utf-8")
+        else:
+            shim = self.tmp / "stub.sh"
+            shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n', encoding="utf-8")
+            shim.chmod(0o755)
+        return shim
+
+    def recorded(self) -> list:
+        if not self.calls_log.is_file():
+            return []
+        return [json.loads(line) for line in self.calls_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    def test_dry_run_names_the_binary_and_spawns_nothing_but_the_probe(self):
+        out = skillgram.register_mcp(skillgram.Hub(self.hub_root), "reasonix", apply=False)
+        self.assertEqual(out["state"], "planned", out)
+        self.assertEqual(out["command"][:3], [out["cli"], "mcp", "add"])
+        self.assertEqual([call[:2] for call in self.recorded()], [["mcp", "get"]])
+
+    def test_a_real_spawn_registers_and_the_reprobe_decides(self):
+        out = skillgram.register_mcp(skillgram.Hub(self.hub_root), "reasonix", apply=True)
+        self.assertEqual(out["state"], "registered", out)
+        self.assertTrue(out["verified"])
+        # probe -> add -> probe: the config is the evidence, not the exit code
+        self.assertEqual([call[:2] for call in self.recorded()],
+                         [["mcp", "get"], ["mcp", "add"], ["mcp", "get"]])
+        add = self.recorded()[1]
+        self.assertEqual(add[:3], ["mcp", "add", "skillgram"])
+        # the reasonix form is positional, env pairs as --env=K=V (checked against
+        # the real CLI): the test pins that shape, not just "add was called"
+        self.assertIn(f"--env={skillgram.HARNESS_ENV}=reasonix", add)
+        self.assertTrue(any(arg.startswith("--env=SKILLGRAM_HUB=") for arg in add))
+        launch = skillgram.mcp_launch_argv()
+        self.assertEqual(add[-len(launch):], launch)
+
+    def test_second_install_is_idempotent_through_the_real_cli(self):
+        hub = skillgram.Hub(self.hub_root)
+        skillgram.register_mcp(hub, "reasonix", apply=True)
+        seen = len(self.recorded())
+        again = skillgram.register_mcp(hub, "reasonix", apply=True)
+        self.assertEqual(again["state"], "already")
+        self.assertEqual([call[:2] for call in self.recorded()[seen:]], [["mcp", "get"]])
+
+
+class TestDaemon(HomeCase):
+    """The daemon is how edgePass talks to skillgram (one JSON line in, one out) and
+    it had no test: it owns its own stdin/stdout, so it is exercised as a process.
+    """
+
+    def setUp(self):
+        super().setUp()
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        self.proc = None
+
+    def tearDown(self):
+        if self.proc is not None:
+            if self.proc.poll() is None:
+                self.proc.kill()
+            self.proc.wait(timeout=20)
+            for stream in (self.proc.stdin, self.proc.stdout, self.proc.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
+        super().tearDown()
+
+    def start(self):
+        env = dict(os.environ)
+        env.update({
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+            # the daemon reports on HOME's agents: keep the real ones out of the test
+            "HOME": str(self.home),
+            "USERPROFILE": str(self.home),
+            "APPDATA": str(self.tmp / "appdata"),
+        })
+        self.proc = subprocess.Popen(
+            [sys.executable, str(Path(skillgram.__file__).resolve()),
+             "daemon", "--hub", str(self.hub_root)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding="utf-8", errors="replace",
+            cwd=str(self.tmp), env=env,
+        )
+        return self
+
+    def read(self, timeout: float = 30.0) -> dict:
+        box = {}
+        thread = threading.Thread(target=lambda: box.setdefault("line", self.proc.stdout.readline()), daemon=True)
+        thread.start()
+        thread.join(timeout)
+        if "line" not in box:
+            self.proc.kill()
+            self.proc.wait(timeout=20)
+            self.fail(f"the daemon did not answer in {timeout}s; stderr: {self.proc.stderr.read()[:600]}")
+        self.assertTrue(box["line"], "the daemon closed its stdout")
+        return json.loads(box["line"])
+
+    def send(self, line: str) -> dict:
+        self.proc.stdin.write(line + "\n")
+        self.proc.stdin.flush()
+        return self.read()
+
+    def test_one_json_line_in_one_json_line_out(self):
+        self.start()
+        hello = self.read()
+        self.assertEqual(hello["op"], "hello")
+        self.assertEqual(Path(hello["hub"]), self.hub_root)
+        self.assertEqual(hello["version"], skillgram.VERSION)
+
+        self.assertEqual(self.send('{"op": "ping"}'), {"ok": True, "op": "pong"})
+
+        garbage = self.send("this is not json")
+        self.assertFalse(garbage["ok"])
+        self.assertEqual(garbage["error"], "the line is not JSON")
+
+        unknown = self.send('{"op": "nope"}')
+        self.assertFalse(unknown["ok"])
+        self.assertIn("unknown op", unknown["error"])
+
+        st = self.send('{"op": "status"}')
+        self.assertEqual(st["op"], "status")
+        self.assertEqual(st["skills"], 1)
+        self.assertEqual(st["version"], skillgram.VERSION)
+
+        self.assertEqual(self.send('{"op": "quit"}')["op"], "quit")
+        self.assertEqual(self.proc.wait(timeout=20), 0, "quit must exit 0")
 
 
 if __name__ == "__main__":
