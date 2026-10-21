@@ -199,7 +199,9 @@ pipeline, and a violation that cannot be merged.
 3. **`policy` enforced** — `mount`/`sync`/MCP refuse; the same code path with a switch.
 4. **Org policy by reference** (`--policy git@…`, hash in the report) — the corporate
    story, still no service.
-5. **Per-harness rules** — reserved in the schema from day one, interpreted last.
+5. **Per-harness rules** — reserved in the schema from day one, interpreted last. Not
+   before a real case exists: see §9.4 for the shared-directory limit that has to be
+   answered first.
 
 ## 8. How a company adopts it (the GitHub-link path)
 
@@ -237,6 +239,15 @@ by editing this file before the code exists, and cheap to change after.
    validates `harnesses` so no file has to migrate later, but nothing reads it yet.
    There is no evidence of demand, and interpreting it would double the enforcement
    surface for a case nobody has asked for.
+
+   **And it is not free to interpret, because the layout is not per-harness everywhere:**
+   each harness home is its own directory (`.cursor/skills`, `.claude/skills`…), but the
+   project layer shares one — `.agents/skills` is read by `agents`, `reasonix` and
+   `hermes` (`PROJECT_SKILL_DIRS`). A `deny` for `reasonix` that spares `hermes` cannot be
+   expressed there: one directory, three readers. So when this is built, the rule has to
+   be *per-harness where the harness owns the directory, and explicitly "not expressible"
+   where it does not* — never a silent apply-to-all. Deferred until a real case names the
+   semantics (2026-10-21).
 
 Two consequences worth writing down, because they are easy to forget later:
 
