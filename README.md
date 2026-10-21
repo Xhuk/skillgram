@@ -42,6 +42,7 @@ an agent how to report a bug or a gap.
 | **Contract** | `lint --contract`, `new` | does this skill state a trigger, rules, decisions, steps and an output — or is it a paragraph? |
 | **Provenance** | `SKILLMETA.json` | who wrote it, when, from where, and the hash that makes `update` possible |
 | **Declared usage** | `touch`, `list --used` / `--unused` | which skills were actually used in this project, and which never were — `by_harness` says from which agent, so changing harness does not lose the record |
+| **Taste** | `seed` / `seed --never` | the skills that are always recommended (`qring-anti-slop`) and the ones that never are — a hub-level decision, not a score |
 | **Policy** | per-harness exclude *(planned)*, `retire`, project scope | who is allowed to see this skill, and how it leaves without being deleted |
 
 The honest limit, stated once: skillgram cannot see what an agent *reads*. Usage is what the agent
@@ -254,7 +255,7 @@ and the skill that walks an agent through them:
 | `new` | scaffold a skill from the contract (`SKILL.md` + `SKILLMETA.json`); `lint` decides whether it ships. |
 | `watch` / `daemon` / `install-autostart` | keep it in sync by itself. |
 
-`skillgram --help` lists all of them (37); `skillgram <command> --help` is the contract for
+`skillgram --help` lists all of them (38); `skillgram <command> --help` is the contract for
 one. Every command prints **exactly one JSON line** on stdout (`--json` for the human ones too).
 `--hub`, `--json` and `--quiet` are global: `skillgram --hub X status` and `skillgram status --hub X`
 are the same command (the one after the subcommand wins when both are given). Exit code `0` healthy,

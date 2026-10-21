@@ -77,7 +77,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "1.4.3"
+VERSION = "1.5.0"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto
@@ -767,6 +767,9 @@ def project_status(hub: Hub, project: Path) -> dict:
         "links_sin_registrar": extra,
         "local_duplicates": duplicates,
         "local_only": local_only,
+        # the user's own seeds, minus the ones this project already has: a
+        # recommendation, not drift (it never turns `ok` false)
+        "seeds_missing": [s for s in read_seeds()["always"] if s not in registered],
     }
 
 
@@ -1881,30 +1884,156 @@ def repo_signals(project: Path) -> dict:
     }
 
 
-def rank_skills(hub: Hub, tokens: list, limit: int | None = None) -> list:
-    """Scoring determinista del catalogo: cuantos tokens aparecen en el nombre, el
-    tipo o la cabeza del SKILL.md. Devuelve (skill, tipo, score, cabeza) ya ordenado.
-    `bootstrap` y `missing` solo cambian lo que publican de cada fila.
+RANK_NAME = 3
+RANK_CATEGORY = 2
+RANK_BODY = 1
+RANK_MIN = 2
+
+# A tag is a word, not a fragment: "go" must match `golang-patterns` and must not
+# match `godmode`; "node" must not match `nodejs-keccak256`. The body keeps a plain
+# substring match, because prose says "deployment" and means deploy.
+TOKEN_ALIASES = {
+    "go": ("go", "golang"),
+    "ts": ("ts", "typescript"),
+    "js": ("js", "javascript"),
+    "py": ("py", "python"),
+    "k8s": ("k8s", "kubernetes"),
+    "postgres": ("postgres", "postgresql"),
+    "supabase": ("supabase",),
+}
+
+SEEDS_ENV = "SKILLGRAM_SEEDS"
+SEED_MODES = ("always", "never")
+
+
+def seeds_path() -> Path:
+    env = (os.environ.get(SEEDS_ENV) or "").strip()
+    return Path(env) if env else HOME / ".agents" / "skillgram-seeds.json"
+
+
+def read_seeds() -> dict:
+    """The user's standing decision: what is always recommended, and what never is.
+
+    It lives in the hub (`~/.agents/skillgram-seeds.json`), not in the project,
+    because a taste is not a repo: `qring-anti-slop` is wanted everywhere or nowhere.
     """
+    try:
+        data = json.loads(seeds_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    out = {}
+    for mode in SEED_MODES:
+        values = data.get(mode) if isinstance(data, dict) else None
+        out[mode] = sorted({str(v).strip() for v in (values or []) if str(v).strip()})
+    return out
+
+
+def write_seeds(data: dict) -> Path:
+    path = seeds_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {mode: sorted(set(data.get(mode) or [])) for mode in SEED_MODES}
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return path
+
+
+def seed_skills(hub: Hub, names: list, mode: str = "always", remove: bool = False) -> dict:
+    """Add/remove seeds (or just list them when no name is given)."""
+    if mode not in SEED_MODES:
+        return {"ok": False, "op": "seed", "error": f"mode must be one of {', '.join(SEED_MODES)}"}
+    seeds = read_seeds()
+    if not names:
+        return {"ok": True, "op": "seed", "always": seeds["always"], "never": seeds["never"],
+                "file": str(seeds_path())}
+    known = hub.skills()
+    other = "never" if mode == "always" else "always"
+    done, unknown = [], []
+    for raw in names:
+        name = str(raw).strip()
+        if not name:
+            continue
+        if name not in known:
+            unknown.append(name)
+            continue
+        if remove:
+            if name in seeds[mode]:
+                seeds[mode].remove(name)
+                done.append(name)
+            continue
+        if name not in seeds[mode]:
+            seeds[mode].append(name)
+        if name in seeds[other]:
+            seeds[other].remove(name)
+        done.append(name)
+    path = write_seeds(seeds)
+    return {
+        "ok": not unknown,
+        "op": "seed",
+        "mode": mode,
+        "removed": remove,
+        "changed": done,
+        "unknown": unknown,
+        "always": seeds["always"],
+        "never": seeds["never"],
+        "file": str(path),
+    }
+
+
+def rank_skills(hub: Hub, tokens: list, limit: int | None = None,
+                prefer: list | None = None, avoid: list | None = None) -> list:
+    """Weighted, deterministic scoring of the catalog.
+
+    A token in the skill NAME is worth 3, in its category 2, in the head of the
+    SKILL.md 1: "deploy" in the name means the skill is about deploying, matching it
+    in 1200 chars of body may only be a mention. Anything below `RANK_MIN` is noise
+    and is dropped instead of padded into the list (that is how `apple-meta-craft`
+    used to rank for a Go+Vite repo). `prefer` is the user's seed list and comes
+    first whatever its score, because a seed is a decision, not a guess.
+
+    `bootstrap` and `missing` only differ in what they publish from each row.
+    """
+    prefer_set = set(prefer or [])
+    avoid_set = set(avoid or [])
+    compiled = []
+    for token in (str(t).lower() for t in tokens if str(t).strip()):
+        words = TOKEN_ALIASES.get(token, (token,))
+        body = "|".join(re.escape(w) for w in words)
+        compiled.append((token, re.compile(r"(?<![a-z0-9])(" + body + r")(?![a-z0-9])")))
     rows = []
     for name, tipo in hub.skills().items():
+        if name in avoid_set:
+            continue
         try:
             head = (hub.root / tipo / name / "SKILL.md").read_text(encoding="utf-8", errors="replace")[:1200]
         except OSError:
             head = ""
-        hay = f"{name} {tipo} {head}".lower()
-        score = sum(1 for t in tokens if t in hay)
-        if score:
-            rows.append((name, tipo, score, head))
-    rows.sort(key=lambda r: (-r[2], r[0]))
+        low_head = head.lower()
+        low_tipo = tipo.lower()
+        low_name = name.lower()
+        score = hits = 0
+        for token, pattern in compiled:
+            in_name = bool(pattern.search(low_name))
+            in_category = bool(pattern.search(low_tipo))
+            in_body = token in low_head
+            where = in_name * RANK_NAME + in_category * RANK_CATEGORY + in_body * RANK_BODY
+            if where:
+                score += where
+                hits += 1
+        seeded = name in prefer_set
+        if seeded or score >= RANK_MIN:
+            rows.append({"skill": name, "tipo": tipo, "score": score, "head": head,
+                         "seed": seeded, "hits": hits})
+    rows.sort(key=lambda r: (not r["seed"], -r["score"], -r["hits"], len(r["skill"]), r["skill"]))
     return rows if limit is None else rows[:limit]
 
 
 def candidate_skills(hub: Hub, signals: dict, limit: int = 60) -> list:
-    """Filtro determinista del catalogo: 900 -> ~60 candidates."""
+    """Filtro determinista del catalogo: 900 -> ~60 candidates (seeds included)."""
+    seeds = read_seeds()
     return [
-        {"skill": name, "tipo": tipo, "score": score, "summary": head[:280].replace("\n", " ")}
-        for name, tipo, score, head in rank_skills(hub, signals["tags"], limit)
+        {"skill": row["skill"], "tipo": row["tipo"], "score": row["score"], "seed": row["seed"],
+         "summary": row["head"][:280].replace("\n", " ")}
+        for row in rank_skills(hub, signals["tags"], limit,
+                               prefer=seeds["always"], avoid=seeds["never"])
     ]
 
 
@@ -1941,12 +2070,14 @@ def bootstrap(hub: Hub, project: Path, cfg: dict | None, apply: bool = False) ->
                 "project": str(project), "skills": len(scope["skills"])}
     signals = repo_signals(project)
     candidates = candidate_skills(hub, signals)
+    seeds = read_seeds()
     result = {
         "ok": True,
         "op": "bootstrap",
         "project": str(project),
         "signals": signals,
         "candidates": len(candidates),
+        "seeds": seeds["always"],
         "selection": [],
         "gaps": [],
         "applied": False,
@@ -1955,9 +2086,30 @@ def bootstrap(hub: Hub, project: Path, cfg: dict | None, apply: bool = False) ->
     if not cfg:
         result["note"] = "no LLM configured: candidates only (no set is chosen)"
         result["top_candidates"] = [c["skill"] for c in candidates[:12]]
+        if apply and seeds["always"]:
+            # a seed is a standing decision: with no LLM to pick a set, the seeds
+            # are the set. `qring-anti-slop` should not depend on a model call.
+            res = promote(hub, seeds["always"], project)
+            manifest = _read_manifest(project)
+            for name in seeds["always"]:
+                entry = manifest["skills"].get(name)
+                if entry:
+                    entry["by"] = "seed"
+                    entry["why"] = "always recommended (skillgram seed)"
+            manifest["bootstrap_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            _write_manifest(project, manifest)
+            result["applied"] = True
+            result["registradas"] = res["created"] + res["already_present"]
         return result
     selection = llm_select(cfg, project, signals, candidates)
+    # the seeds are not up for a vote: the model may add, never subtract
+    picked = {s["skill"] for s in selection["selected"]}
+    missing_seeds = [{"skill": name, "why": "always recommended (skillgram seed)"}
+                     for name in seeds["always"] if name not in picked]
+    if missing_seeds:
+        selection["selected"] = missing_seeds + selection["selected"]
     llm_log("bootstrap-select", {"project": str(project), "selected": [s["skill"] for s in selection["selected"]],
+                                 "seeds": seeds["always"],
                                  "gaps": selection["gaps"], "candidates": len(candidates)}, cfg["model"])
     result.update({
         "selection": selection["selected"],
@@ -1981,11 +2133,15 @@ def bootstrap(hub: Hub, project: Path, cfg: dict | None, apply: bool = False) ->
 
 
 def missing(hub: Hub, text: str, limit: int = 8) -> dict:
-    """Consulta determinista: hay skill para esto? (sin LLM)."""
+    """Consulta determinista: hay skill para esto? (sin LLM).
+
+    The seeds do not answer a lookup: a query is a specific need, so `prefer` stays
+    empty here (only `never` applies, because the user said never).
+    """
     toks = [t for t in re_findall_words(text) if len(t) > 2]
-    ranked = rank_skills(hub, toks)
-    found = bool(ranked and ranked[0][2] >= 2)
-    best = ranked[0][0] if ranked else ""
+    ranked = rank_skills(hub, toks, avoid=read_seeds()["never"])
+    found = bool(ranked and ranked[0]["score"] >= 2)
+    best = ranked[0]["skill"] if ranked else ""
     record_demand(text, found, best=best, hits=len(ranked))
     return {
         "ok": True,
@@ -1993,7 +2149,7 @@ def missing(hub: Hub, text: str, limit: int = 8) -> dict:
         "query": text,
         "found": found,
         "candidates": [
-            {"skill": name, "tipo": tipo, "score": score} for name, tipo, score, _ in ranked[:limit]
+            {"skill": row["skill"], "tipo": row["tipo"], "score": row["score"]} for row in ranked[:limit]
         ],
     }
 
@@ -2194,6 +2350,7 @@ def list_skills(hub: Hub, category: str | None = None, project: Path | None = No
     """
     known = hub.skills()
     usage = _read_manifest(project)["skills"] if project is not None else {}
+    seeded = set(read_seeds()["always"])
     rows = []
     for name, tipo in sorted(known.items()):
         if category and tipo != category:
@@ -2211,6 +2368,7 @@ def list_skills(hub: Hub, category: str | None = None, project: Path | None = No
             "category": tipo,
             "by": meta.get("by", ""),
             "source": source.get("kind", ""),
+            "seed": name in seeded,
             "use_count": count,
             "last_used": entry.get("last_used", ""),
             # who used it, so another harness can pick up where the last one left off
@@ -3981,6 +4139,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_miss = sub.add_parser("missing", parents=[common], help="deterministic query: is there a skill for this?")
     p_miss.add_argument("text", nargs="+")
     p_miss.add_argument("--project")
+    p_seed = sub.add_parser("seed", parents=[common], help="skills that are always recommended (or never)")
+    p_seed.add_argument("skills", nargs="*", help="skill names (none: show the list)")
+    p_seed.add_argument("--never", action="store_true", help="never recommend them instead")
+    p_seed.add_argument("--remove", action="store_true", help="drop them from the list")
     p_prop = sub.add_parser("propose", parents=[common], help="draft a new skill with the LLM and (with --apply) publish it")
     p_prop.add_argument("need", nargs="+")
     p_prop.add_argument("--project")
@@ -4236,6 +4398,10 @@ def dispatch(args, hub: Hub) -> dict | int:
         result["project"] = str(proj["path"])
         return result
 
+    if cmd == "seed":
+        return seed_skills(hub, args.skills, mode="never" if args.never else "always",
+                           remove=args.remove)
+
     if cmd == "propose":
         proj = resolve_project(args.project)
         cfg = None if args.no_llm else llm_config()
@@ -4433,6 +4599,21 @@ def human_output(args, result: dict) -> str | None:
             lines.append(f"not in scope: {', '.join(result['absent'])}")
         return "\n".join(lines)
 
+    if cmd == "seed":
+        lines = []
+        for label, key in (("always", "always"), ("never", "never")):
+            if result.get(key):
+                lines.append(f"{label}: {', '.join(result[key])}")
+        if not lines:
+            lines.append("no seeds yet: `skillgram seed <skill>...` marks one as always recommended")
+        if result.get("changed"):
+            verb = "removed from" if result.get("removed") else "seeded in"
+            lines.append(f"{verb} {result['mode']}: {', '.join(result['changed'])}")
+        if result.get("unknown"):
+            lines.append(f"not in the hub: {', '.join(result['unknown'])}")
+        lines.append(f"file: {result['file']}")
+        return "\n".join(lines)
+
     if cmd == "project-status":
         lines = [
             f"project: {result['project_name']} ({result['project']})  resolution: {result['resolucion']}",
@@ -4452,6 +4633,9 @@ def human_output(args, result: dict) -> str | None:
                 lines.append(f"{label}: {', '.join(items)}")
         if not result["tiene_config"]:
             lines.append("no .agents/config.json (run `init` to pin the name)")
+        if result.get("seeds_missing"):
+            lines.append(f"seeds not in this project (recommended): {', '.join(result['seeds_missing'])}"
+                         " -- `skillgram use <skill>` to add them")
         return "\n".join(lines)
 
     return None

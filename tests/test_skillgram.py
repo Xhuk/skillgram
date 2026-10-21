@@ -1468,6 +1468,131 @@ class TestCallerIdentity(HomeCase):
         self.assertEqual(self.tally(), {"reasonix": 2, "codex": 1})
 
 
+class TestRankingAndSeeds(HomeCase):
+    """`rank_skills` decided with a flat count over name+category+1200 chars of body,
+    so a weak mention tied with a real match and the tie broke alphabetically (that is
+    how `apple-meta-craft` ranked for a Go+Vite repo). And there was no way to say
+    "this one, always": a taste is not something a score should overrule.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._seeds_env = os.environ.get(skillgram.SEEDS_ENV)
+        os.environ[skillgram.SEEDS_ENV] = str(self.tmp / "seeds.json")
+        make_skill(self.hub_root, "infra-ops", "deploy-runbook", "rollout steps")
+        make_skill(self.hub_root, "infra-ops", "misc-notes", "this body mentions deploy once")
+        make_skill(self.hub_root, "design-ui", "palette", "colors for the design system")
+        make_skill(self.hub_root, "agent-workflows", "anti-slop", "reject low-evidence work")
+
+    def tearDown(self):
+        if self._seeds_env is None:
+            os.environ.pop(skillgram.SEEDS_ENV, None)
+        else:
+            os.environ[skillgram.SEEDS_ENV] = self._seeds_env
+        super().tearDown()
+
+    def hub(self):
+        return skillgram.Hub(self.hub_root)
+
+    def test_a_name_match_beats_a_body_mention(self):
+        rows = skillgram.rank_skills(self.hub(), ["deploy"])
+        self.assertEqual([r["skill"] for r in rows], ["deploy-runbook"])
+        # the body-only mention scores 1, below RANK_MIN: noise, not a candidate
+        self.assertNotIn("misc-notes", [r["skill"] for r in rows])
+
+    def test_a_tag_is_a_word_not_a_fragment(self):
+        make_skill(self.hub_root, "languages", "golang-patterns", "go idioms")
+        make_skill(self.hub_root, "agent-workflows", "godmode", "unrelated to the go toolchain")
+        rows = skillgram.rank_skills(self.hub(), ["go"])
+        names = [r["skill"] for r in rows]
+        self.assertIn("golang-patterns", names, "the alias must still match the real skill")
+        self.assertNotIn("godmode", names, "'go' is not a prefix of a word")
+
+    def test_a_never_seed_is_filtered_out(self):
+        skillgram.seed_skills(self.hub(), ["deploy-runbook"], mode="never")
+        rows = skillgram.rank_skills(self.hub(), ["deploy", "runbook"],
+                                     avoid=skillgram.read_seeds()["never"])
+        self.assertEqual(rows, [])
+
+    def test_an_always_seed_comes_first_even_with_no_score(self):
+        skillgram.seed_skills(self.hub(), ["anti-slop"], mode="always")
+        seeds = skillgram.read_seeds()
+        rows = skillgram.rank_skills(self.hub(), ["deploy"], prefer=seeds["always"], avoid=seeds["never"])
+        self.assertEqual(rows[0]["skill"], "anti-slop")
+        self.assertEqual(rows[0]["score"], 0)
+        self.assertTrue(rows[0]["seed"])
+        self.assertFalse(rows[1]["seed"])
+
+    def test_candidates_carry_the_seeds(self):
+        skillgram.seed_skills(self.hub(), ["anti-slop"], mode="always")
+        candidates = skillgram.candidate_skills(self.hub(), {"tags": ["deploy"]})
+        self.assertEqual(candidates[0]["skill"], "anti-slop")
+        self.assertTrue(candidates[0]["seed"])
+        self.assertIn("deploy-runbook", [c["skill"] for c in candidates])
+
+    def test_missing_is_not_hijacked_by_a_seed(self):
+        skillgram.seed_skills(self.hub(), ["anti-slop"], mode="always")
+        res = skillgram.missing(self.hub(), "rollout deploy runbook")
+        self.assertTrue(res["found"])
+        self.assertEqual(res["candidates"][0]["skill"], "deploy-runbook")
+
+    def test_seed_cli_add_move_remove_and_list(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            skillgram.main(["seed", "anti-slop", "--hub", str(self.hub_root)])
+        self.assertIn("always: anti-slop", buf.getvalue())
+
+        # --never moves it instead of duplicating it in both lists
+        with contextlib.redirect_stdout(io.StringIO()):
+            skillgram.main(["seed", "anti-slop", "--never", "--hub", str(self.hub_root)])
+        seeds = skillgram.read_seeds()
+        self.assertEqual(seeds["always"], [])
+        self.assertEqual(seeds["never"], ["anti-slop"])
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            skillgram.main(["seed", "anti-slop", "--never", "--remove", "--hub", str(self.hub_root)])
+        self.assertEqual(skillgram.read_seeds(), {"always": [], "never": []})
+
+    def test_an_unknown_name_is_not_silently_accepted(self):
+        res = skillgram.seed_skills(self.hub(), ["ghost-skill"])
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["unknown"], ["ghost-skill"])
+        self.assertEqual(skillgram.read_seeds()["always"], [])
+
+    def test_bootstrap_applies_the_seeds_without_an_llm(self):
+        skillgram.seed_skills(self.hub(), ["anti-slop"], mode="always")
+        proj = self.tmp / "repo"
+        proj.mkdir()
+        plan = skillgram.bootstrap(self.hub(), proj, None, apply=False)
+        self.assertEqual(plan["seeds"], ["anti-slop"])
+        self.assertIn("anti-slop", plan["top_candidates"])
+
+        applied = skillgram.bootstrap(self.hub(), proj, None, apply=True)
+        self.assertTrue(applied["applied"], applied)
+        self.assertEqual(applied["registradas"], ["anti-slop"])
+        entry = skillgram._read_manifest(proj)["skills"]["anti-slop"]
+        self.assertEqual(entry["by"], "seed")
+
+    def test_list_marks_the_seeded_rows(self):
+        skillgram.seed_skills(self.hub(), ["anti-slop"], mode="always")
+        rows = {r["skill"]: r for r in skillgram.list_skills(self.hub())["rows"]}
+        self.assertTrue(rows["anti-slop"]["seed"])
+        self.assertFalse(rows["deploy-runbook"]["seed"])
+
+    def test_project_status_recommends_the_seed_it_does_not_have(self):
+        skillgram.seed_skills(self.hub(), ["anti-slop"], mode="always")
+        proj = self.tmp / "proj"
+        skillgram.init_project("proj", str(proj))
+        skillgram.promote(self.hub(), ["deploy-runbook"], proj)
+
+        st = skillgram.project_status(self.hub(), proj)
+        self.assertEqual(st["seeds_missing"], ["anti-slop"])
+        self.assertTrue(st["ok"], "a missing seed is a recommendation, not drift")
+
+        skillgram.promote(self.hub(), ["anti-slop"], proj)
+        self.assertEqual(skillgram.project_status(self.hub(), proj)["seeds_missing"], [])
+
+
 class TestMcpThroughTheRealCli(HomeCase):
     """`install` delegates the MCP registration to the harness CLI, and every other
     test injects a Python callable. That leaves the real path unproven: an actual

@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.5.0 — taste is a decision, not a score
+
+`bootstrap` ranked the hub with a flat count of tags found anywhere in the name, the
+category or 1200 chars of `SKILL.md`, so a weak mention tied with a real match and the
+tie broke alphabetically. On a Go+Vite repo that put `apple-meta-craft` and
+`ad3-recon` in the top twelve. And there was no way to say "this one, always": if you
+like a skill, the score could still outvote you.
+
+- **`skillgram seed <skill>...`** — the hub-level list of skills that are *always*
+  recommended (`~/.agents/skillgram-seeds.json`). `--never` is the opposite list and
+  removes the skill from every recommendation, `--remove` takes it out, and
+  `skillgram seed` alone prints both lists. An unknown name is reported, not seeded.
+- **Seeds win.** They come first in `bootstrap`'s candidates whatever their score,
+  they are promoted by `bootstrap --apply` **even with no LLM configured** (a standing
+  decision should not need a model call), and the model may only add to them, never
+  drop them. `list` marks the rows (`seed: true`).
+- **`project-status` recommends the missing ones.** `seeds_missing` lists the seeds the
+  project does not have, with the command to add them. It never turns `ok` false: a
+  recommendation is not drift.
+- **The ranking is weighted and precise.** A token in the name is worth 3, in the
+  category 2, in the body 1; anything under 2 is dropped instead of padding the list;
+  and a tag matches a *word*, not a fragment, with aliases where the tag is not the
+  word (`go` → `go`/`golang`, `ts` → `ts`/`typescript`). On a Go+Vite repo the top
+  candidates went from `apple-meta-craft, ad3-recon, azure-kubernetes` to
+  `react-testing, react-patterns, react-performance, react-build-resolver, go-testing`.
+
+136 stdlib tests.
+
 ## 1.4.3 — two defects a real repo found in the first ten minutes
 
 Both showed up mounting a real monorepo (vetgroom-demo: Go backend, Vite/React
