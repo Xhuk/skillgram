@@ -77,7 +77,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto
@@ -1697,6 +1697,108 @@ def mount_project(hub: Hub, project: Path, apply: bool = False, prune_global: bo
     }
 
 
+def _dir_links_and_natives(dirpath: Path, hub_root: Path) -> tuple:
+    """(links that resolve inside the hub, native skill dirs) for one skills folder."""
+    links, natives = set(), set()
+    if not dirpath.is_dir():
+        return links, natives
+    try:
+        entries = sorted(dirpath.iterdir())
+    except OSError:
+        return links, natives
+    for entry in entries:
+        if is_link(entry):
+            tgt = link_target(entry)
+            if tgt and _under(Path(tgt), hub_root):
+                links.add(entry.name)
+            continue
+        if entry.is_dir() and (entry / "SKILL.md").is_file():
+            natives.add(entry.name)
+    return links, natives
+
+
+def _align_rows(hub: Hub, project: Path, names: set) -> list:
+    """One row per installed harness: what it can load, and what of the set it cannot."""
+    home = {}
+    for agent_dir in hub.agents():
+        keys = {agent_dir.parent.name.lstrip("."), normalize_harness(agent_dir.parent.name.lstrip("."))}
+        links, natives = _dir_links_and_natives(agent_dir, hub.root)
+        for key in keys:
+            entry = home.setdefault(key, {"links": set(), "natives": set()})
+            entry["links"] |= links
+            entry["natives"] |= natives
+    rows = []
+    for harness in detect_harnesses():
+        if not harness["instalado"]:
+            continue
+        app = harness["app"]
+        rels = PROJECT_SKILL_DIRS.get(app) or ()
+        via_project, native_project = set(), set()
+        for rel in rels:
+            links, natives = _dir_links_and_natives(project / rel, hub.root)
+            via_project |= links
+            native_project |= natives
+        visible = home.get(app) or home.get(normalize_harness(app)) or {"links": set(), "natives": set()}
+        sees = via_project | visible["links"]
+        missing = sorted(names - sees)
+        extra = sorted(sees - names)
+        if rels and via_project:
+            mode = "project"
+        elif rels:
+            mode = "mixed" if visible["links"] else "project"
+        else:
+            mode = "global-only"
+        rows.append({
+            "harness": app,
+            "mode": mode,
+            "project_dirs": list(rels),
+            "sees": len(sees),
+            "via_project": len(via_project),
+            "via_home": len(visible["links"]),
+            "missing": missing,
+            "extra": extra[:ALIGN_LIST_LIMIT],
+            "extra_count": len(extra),
+            "native": sorted(native_project | visible["natives"]),
+            # who can fix a missing skill: mount writes project dirs, sync writes homes
+            "fix": None if not missing else ("mount" if rels else "sync"),
+        })
+    return rows
+
+
+def align(hub: Hub, project: Path, apply: bool = False, known: dict | None = None) -> dict:
+    """What each harness actually sees of one project's set -- from the disk.
+
+    Read-only by default. `--apply` only *adds* the links the project needs: an
+    `extra` is reported, never removed, and a native directory is never touched (the
+    project set is the only source; a harness that sees more is a violation to report,
+    not a suggestion to propagate).
+    """
+    scope = project_scope(hub, project, known)
+    if not scope["skills"]:
+        return {"ok": False, "op": "align", "project": str(project),
+                "error": "the project has no skills in scope; run `skillgram use <skill>...` first"}
+    names = {row["name"] for row in scope["skills"]}
+    rows = _align_rows(hub, project, names)
+    applied = []
+    if apply:
+        todo = [r["harness"] for r in rows if r["missing"] and r["project_dirs"]]
+        if todo:
+            mount_project(hub, project, apply=True, only=todo, known=known)
+            applied = todo
+            rows = _align_rows(hub, project, names)
+    unfixable = [r["harness"] for r in rows if r["missing"]]
+    return {
+        "ok": not unfixable,
+        "op": "align",
+        "project": str(project),
+        "project_name": scope["project_name"],
+        "skills": len(names),
+        "applied": applied,
+        "unfixable": unfixable,
+        "rows": rows,
+    }
+
+
 def prune_global_links(hub: Hub, apply: bool = False) -> dict:
     """Retira de los homes los links al hub: strict project-only."""
     if not apply:
@@ -1904,6 +2006,7 @@ TOKEN_ALIASES = {
 
 SEEDS_ENV = "SKILLGRAM_SEEDS"
 SEED_MODES = ("always", "never")
+ALIGN_LIST_LIMIT = 25
 
 
 def seeds_path() -> Path:
@@ -4226,6 +4329,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_pstat = sub.add_parser("project-status", parents=[common], help="health of the project scope")
     p_pstat.add_argument("--project")
+
+    p_align = sub.add_parser("align", parents=[common],
+                             help="what each harness actually sees of this project, and what it lacks")
+    p_align.add_argument("--project")
+    p_align.add_argument("--apply", action="store_true", help="link the missing ones (never removes, never touches natives)")
     return ap
 
 
@@ -4502,6 +4610,12 @@ def dispatch(args, hub: Hub) -> dict | int:
         result["resolucion"] = proj["source"]
         return result
 
+    if cmd == "align":
+        proj = resolve_project(args.project)
+        result = align(hub, Path(proj["path"]), apply=args.apply)
+        result["resolucion"] = proj["source"]
+        return result
+
     return {"ok": False, "op": cmd, "error": f"unknown command: {cmd}"}  # argparse ya valida
 
 
@@ -4612,6 +4726,39 @@ def human_output(args, result: dict) -> str | None:
         if result.get("unknown"):
             lines.append(f"not in the hub: {', '.join(result['unknown'])}")
         lines.append(f"file: {result['file']}")
+        return "\n".join(lines)
+
+    if cmd == "align":
+        lines = [
+            f"project: {result['project_name']} ({result['project']})  "
+            f"skills in scope: {result['skills']}",
+            f"{'harness':<16}{'mode':<13}{'project':>8}{'home':>7}{'missing':>9}{'extra':>7}{'native':>8}",
+        ]
+        for row in result["rows"]:
+            lines.append(
+                f"{row['harness'][:15]:<16}{row['mode']:<13}{row['via_project']:>8}{row['via_home']:>7}"
+                f"{len(row['missing']):>9}{row['extra_count']:>7}{len(row['native']):>8}"
+            )
+        for row in result["rows"]:
+            if row["missing"]:
+                lines.append(f"{row['harness']}: missing {', '.join(row['missing'][:ALIGN_LIST_LIMIT])}"
+                             + (f" (+{len(row['missing']) - ALIGN_LIST_LIMIT} more)"
+                                if len(row["missing"]) > ALIGN_LIST_LIMIT else "")
+                             + f" -- fix with `{row['fix']}`")
+            if row["native"]:
+                lines.append(f"{row['harness']}: native (not touched) {', '.join(row['native'][:ALIGN_LIST_LIMIT])}")
+            if row["extra_count"]:
+                if row["extra_count"] <= ALIGN_LIST_LIMIT:
+                    lines.append(f"{row['harness']}: {row['extra_count']} extra (reported, never removed): "
+                                 f"{', '.join(row['extra'])}")
+                else:
+                    lines.append(f"{row['harness']}: {row['extra_count']} extra -- the whole hub is linked here; "
+                                 "`mount --prune-global` makes the project set the only source")
+        if result["applied"]:
+            lines.append(f"linked in: {', '.join(result['applied'])}")
+        if result["unfixable"]:
+            lines.append(f"still missing (no project dir to link into): {', '.join(result['unfixable'])}"
+                         " -- `skillgram sync` exposes the whole hub instead")
         return "\n".join(lines)
 
     if cmd == "project-status":

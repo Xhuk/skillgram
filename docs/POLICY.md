@@ -1,8 +1,7 @@
 # Keeping things in order: `align`, and `policy` as the gate
 
-Design note, not implemented. Two commands are proposed here; nothing in this
-document is code yet. It exists so the decisions can be argued and signed before
-anything is built.
+Design note. **`align` is implemented (1.6.0); `policy` is not.** The document
+exists so the decisions can be argued and signed before the rest is built.
 
 The audience is the same person in two postures:
 
@@ -66,7 +65,7 @@ effective(harness, project) =
   ∪ what a precedence config makes the harness read    (hub-first declaration)
 ```
 
-## 4. `align` — order, no policy needed
+## 4. `align` — order, no policy needed (implemented in 1.6.0)
 
 ```
 skillgram align [--project P] [--json]

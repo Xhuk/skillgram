@@ -1593,6 +1593,109 @@ class TestRankingAndSeeds(HomeCase):
         self.assertEqual(skillgram.project_status(self.hub(), proj)["seeds_missing"], [])
 
 
+class TestAlign(HomeCase):
+    """`align` is the read-only question the personal case needs: what does each
+    harness actually see of this project, and what is it missing. It never removes an
+    `extra` and never touches a native -- the project set is the only source.
+    """
+
+    def project(self, skills=("deploy", "review")) -> Path:
+        for name in skills:
+            make_skill(self.hub_root, "infra-ops", name, f"{name} steps")
+        proj = self.tmp / "proj"
+        skillgram.init_project("proj", str(proj))
+        skillgram.promote(skillgram.Hub(self.hub_root), list(skills), proj)
+        return proj
+
+    def harness(self, folder: str) -> Path:
+        home = self.home / folder / "skills"
+        home.mkdir(parents=True, exist_ok=True)
+        return home
+
+    def rows(self, proj) -> dict:
+        return {r["harness"]: r for r in skillgram.align(skillgram.Hub(self.hub_root), proj)["rows"]}
+
+    def test_a_harness_with_a_project_dir_reports_missing_then_is_fixed(self):
+        proj = self.project()
+        self.harness(".claude")
+        before = self.rows(proj)["claude-code"]
+        self.assertEqual(before["mode"], "project")
+        self.assertEqual(before["missing"], ["deploy", "review"])
+        self.assertEqual(before["fix"], "mount")
+
+        res = skillgram.align(skillgram.Hub(self.hub_root), proj, apply=True)
+        self.assertTrue(res["ok"], res["unfixable"])
+        self.assertIn("claude-code", res["applied"])
+        after = {r["harness"]: r for r in res["rows"]}["claude-code"]
+        self.assertEqual(after["missing"], [])
+        self.assertEqual(after["via_project"], 2)
+
+    def test_a_global_only_harness_is_reported_and_not_fixed(self):
+        proj = self.project()
+        self.harness(".antigravity")
+        res = skillgram.align(skillgram.Hub(self.hub_root), proj, apply=True)
+        row = {r["harness"]: r for r in res["rows"]}["antigravity"]
+        self.assertEqual(row["mode"], "global-only")
+        self.assertEqual(row["fix"], "sync")
+        self.assertEqual(sorted(row["missing"]), ["deploy", "review"])
+        # no project dir to link into: the run cannot be green, and it says so
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["unfixable"], ["antigravity"])
+
+    def test_an_extra_is_reported_and_never_removed(self):
+        proj = self.project()
+        self.harness(".claude")
+        make_skill(self.hub_root, "design-ui", "archify")
+        skillgram.align(skillgram.Hub(self.hub_root), proj, apply=True)
+        # someone links a skill that is not in the set
+        extra = proj / ".claude" / "skills" / "archify"
+        extra.parent.mkdir(parents=True, exist_ok=True)
+        skillgram.make_links([(extra, self.hub_root / "design-ui" / "archify")])
+        self.assertTrue(skillgram.is_link(extra))
+
+        res = skillgram.align(skillgram.Hub(self.hub_root), proj, apply=True)
+        row = {r["harness"]: r for r in res["rows"]}["claude-code"]
+        self.assertEqual(row["extra"], ["archify"])
+        self.assertTrue(skillgram.is_link(extra), "align never removes")
+
+    def test_a_native_is_reported_and_left_alone(self):
+        proj = self.project()
+        self.harness(".claude")
+        native = proj / ".claude" / "skills" / "mine"
+        native.mkdir(parents=True)
+        (native / "SKILL.md").write_text("---\nname: mine\n---\nbody\n", encoding="utf-8")
+        res = skillgram.align(skillgram.Hub(self.hub_root), proj, apply=True)
+        row = {r["harness"]: r for r in res["rows"]}["claude-code"]
+        self.assertEqual(row["native"], ["mine"])
+        self.assertFalse(skillgram.is_link(native))
+        self.assertTrue((native / "SKILL.md").is_file())
+
+    def test_the_cli_reports_a_table_and_exits_by_missing(self):
+        proj = self.project()
+        self.harness(".claude")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = skillgram.main(["align", "--project", str(proj), "--hub", str(self.hub_root)])
+        self.assertEqual(code, 1, "missing skills are drift")
+        self.assertIn("harness", buf.getvalue())
+        self.assertIn("claude-code", buf.getvalue())
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = skillgram.main(["align", "--apply", "--project", str(proj), "--hub", str(self.hub_root)])
+        self.assertEqual(code, 0)
+
+    def test_json_is_one_line_and_names_the_fix(self):
+        proj = self.project()
+        self.harness(".claude")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            skillgram.main(["align", "--json", "--project", str(proj), "--hub", str(self.hub_root)])
+        payload = json.loads(buf.getvalue().strip())
+        self.assertEqual(payload["op"], "align")
+        row = {r["harness"]: r for r in payload["rows"]}["claude-code"]
+        self.assertEqual(row["fix"], "mount")
+
+
 class TestMcpThroughTheRealCli(HomeCase):
     """`install` delegates the MCP registration to the harness CLI, and every other
     test injects a Python callable. That leaves the real path unproven: an actual

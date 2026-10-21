@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.6.0 — `align`: the harnesses, told apart
+
+The tool could tell a project what it had, and could paint that set into every harness
+layout — but it could not answer the question a multi-harness developer actually asks:
+*what does each of my agents see of this repo, and where is it short?*
+
+- **`skillgram align [--project P] [--apply]`** — one row per installed harness with
+  `mode` (`project` / `mixed` / `global-only`), `via_project` and `via_home` counts, the
+  skills it is `missing`, the ones it sees that are not in the set (`extra`, capped and
+  counted), and the `native` directories it will not touch. `fix` says who can repair a
+  gap: `mount` (it has a project dir) or `sync` (its only view is the home).
+- **`--apply` only adds.** It links the missing skills into the harness layouts that
+  support one; an `extra` is reported and never removed, a native directory is never
+  modified. Exit `1` while anything is still missing, so it works as a check.
+- The rule it encodes, and the reason it is not a merge: **the project set is the only
+  source**. A harness that sees more is a violation to report, not a suggestion to
+  propagate — the union of every harness is the 850-skill problem the tool exists to
+  solve. Bringing a native into everyone's view is `adopt` → `use` → `align`, a decision
+  with a name on it.
+- Real numbers on a mounted repo: the 14 harnesses with a project dir show
+  `via_project 11 / missing 0`, while the global-only ones show the whole hub as `extra`
+  (851) — which is exactly the asymmetry the command makes visible.
+
+6 tests, 142 total; 4 junction tests skip on POSIX.
+
 ## 1.5.0 — taste is a decision, not a score
 
 `bootstrap` ranked the hub with a flat count of tags found anywhere in the name, the

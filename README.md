@@ -140,6 +140,7 @@ The hub is the library; a project is what an agent actually needs while working 
 skillgram init my-api                 # <project>/.agents/config.json
 skillgram use archify ad3 --project . # link + manifest entry, idempotent
 skillgram mount --apply               # materialize that set where each harness looks
+skillgram align                       # what each harness actually sees, and what it lacks
 skillgram project-status              # healthy / stale / broken / missing links
 ```
 
@@ -291,6 +292,7 @@ and the skill that walks an agent through them:
 | `install` / `propagate` | the whole machine / the repo sweep, with a ledger. |
 | `onboard` / `adopt` | consolidate what harnesses already have (LLM optional) / cooperative adoption. |
 | `init` / `use` / `unuse` / `mount` / `project-status` | the project scope. |
+| `align` | what each harness actually sees of this project, what it lacks, and `--apply` to link it. |
 | `index` / `search` / `missing` / `demand` | find, or learn what is missing. |
 | `touch` / `list` | declared usage: who used what, and from which harness (`by_harness`). |
 | `seed` / `seed --never` | taste: always recommended / never recommended, hub-wide. |
@@ -301,7 +303,7 @@ and the skill that walks an agent through them:
 | `new` | scaffold a skill from the contract (`SKILL.md` + `SKILLMETA.json`); `lint` decides whether it ships. |
 | `watch` / `daemon` / `install-autostart` | keep it in sync by itself. |
 
-`skillgram --help` lists all of them (38); `skillgram <command> --help` is the contract for
+`skillgram --help` lists all of them (39); `skillgram <command> --help` is the contract for
 one. Every command prints **exactly one JSON line** on stdout (`--json` for the human ones too).
 `--hub`, `--json` and `--quiet` are global: `skillgram --hub X status` and `skillgram status --hub X`
 are the same command (the one after the subcommand wins when both are given). Exit code `0` healthy,
@@ -311,6 +313,14 @@ is `0` when the plan was produced.
 ## What changed recently
 
 Full detail in [CHANGELOG.md](CHANGELOG.md) and in the [releases](https://github.com/Xhuk/skillgram/releases).
+
+**1.6.0 — `align`: the harnesses, told apart**
+- `skillgram align` reports, per harness, what it can actually load of this project
+  (`via_project` / `via_home`), what it is missing, what it sees that is not in the set
+  (`extra`, reported and never removed), and the native directories it will not touch.
+  `--apply` links only what the project needs. Exit 1 while something is missing.
+- The rule it encodes: **the project set is the only source**. A harness that sees more
+  is a violation to report, not a suggestion to propagate.
 
 **1.5.0 — taste is a decision, not a score**
 - `seed` / `seed --never`: the hub-level list of skills that are always (or never) recommended.
