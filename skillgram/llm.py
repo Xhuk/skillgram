@@ -1,6 +1,8 @@
 """The connected model: config, one call, and the audit log. Nothing else
 in the tool talks to the network."""
 
+from __future__ import annotations
+
 import json
 import os
 import time

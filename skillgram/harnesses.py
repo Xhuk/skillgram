@@ -1,6 +1,8 @@
 """The harnesses themselves: identity, detection, doctor, the ledger,
 the MCP registration, and the machine-wide `install`/`propagate`."""
 
+from __future__ import annotations
+
 import json
 import os
 import re

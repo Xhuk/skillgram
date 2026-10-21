@@ -1,5 +1,7 @@
 """The command line: parser, dispatch, renderers, `main`."""
 
+from __future__ import annotations
+
 import argparse
 import json
 import os

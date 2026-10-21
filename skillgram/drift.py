@@ -1,6 +1,8 @@
 """Drift, apply, and the hub arriving from git: `plan`, `sync`, `status`,
 `clone`. Writes links; decides nothing about policy."""
 
+from __future__ import annotations
+
 import os
 import shutil
 import subprocess

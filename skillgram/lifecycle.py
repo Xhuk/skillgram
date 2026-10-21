@@ -1,5 +1,7 @@
-﻿"""A skill's life on disk: list, touch, pin, review, retire, export,
+"""A skill's life on disk: list, touch, pin, review, retire, export,
 import, diff, git, index, search, demand, and the authoring gate (`lint`, `new`)."""
+
+from __future__ import annotations
 
 import hashlib
 import json

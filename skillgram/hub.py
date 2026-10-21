@@ -1,5 +1,7 @@
-﻿"""Store and links: the hub, what a link is, and the content hash every
+"""Store and links: the hub, what a link is, and the content hash every
 later module quotes. No sibling imports: this is the base."""
+
+from __future__ import annotations
 
 import hashlib
 import json

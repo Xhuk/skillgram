@@ -1,6 +1,8 @@
 """Bringing in what the harnesses already have: inventory, the plan and
 its apply, adoption, flavor, and precedence."""
 
+from __future__ import annotations
+
 import json
 import os
 import shutil

@@ -1,5 +1,6 @@
-﻿"""skillgram tests â€” stdlib only: python -m unittest discover -s tests -v"""
+"""skillgram tests â€” stdlib only: python -m unittest discover -s tests -v"""
 
+import ast
 import contextlib
 import io
 import json
@@ -2114,6 +2115,47 @@ class TestLintBaseline(HomeCase):
                                              "--hub", str(self.hub_root)]), 0)
             self.assertEqual(skillgram.main(["lint", "--json", "--baseline", str(baseline),
                                              "--hub", str(self.hub_root)]), 0)
+
+
+class TestPackageShape(HomeCase):
+    """Guards for the split itself: the invariants that broke once and must not again."""
+
+    def module_files(self) -> list:
+        return sorted(Path(skillgram.__file__).resolve().parent.glob("*.py"))
+
+    def test_every_module_defers_its_annotations(self):
+        # the split dropped `from __future__ import annotations` from most files (it is a
+        # compiler directive, not a name) and 3.9 died on `set[str] | None` at import
+        missing = []
+        for path in self.module_files():
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            ok = any(
+                isinstance(node, ast.ImportFrom) and node.module == "__future__"
+                and any(a.name == "annotations" for a in node.names)
+                for node in tree.body
+            )
+            if not ok:
+                missing.append(path.name)
+        self.assertEqual(missing, [], "these modules would break on Python 3.9")
+
+    def test_no_module_captures_home_at_import_time(self):
+        # one patch point: every module reads through home_dir()
+        offenders = []
+        for path in self.module_files():
+            if path.name == "hub.py":
+                continue
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if re.match(r"^[A-Z_]+\s*=\s*HOME\b", line):
+                    offenders.append(f"{path.name}:{number}")
+        self.assertEqual(offenders, [])
+
+    def test_the_package_runs_without_the_checkout_shim(self):
+        root = str(Path(__file__).resolve().parents[1])
+        result = subprocess.run([sys.executable, "-m", "skillgram", "--version"],
+                                capture_output=True, text=True, encoding="utf-8",
+                                cwd=str(self.tmp), env=dict(os.environ, PYTHONPATH=root))
+        self.assertEqual(result.returncode, 0, result.stderr[-400:])
+        self.assertIn(skillgram.VERSION, result.stdout)
 
 
 class TestMcpThroughTheRealCli(HomeCase):

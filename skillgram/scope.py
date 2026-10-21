@@ -1,6 +1,8 @@
 """A project's set: the manifest, `use`/`mount`/`align`, and what the
 policy says about it."""
 
+from __future__ import annotations
+
 import json
 import os
 import time

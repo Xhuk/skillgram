@@ -4,6 +4,8 @@ The package is the implementation; `skillgram.py` at the repository root is a
 six-line shim so `python skillgram.py <command>` keeps working from a checkout.
 """
 
+from __future__ import annotations
+
 from .adopt import (  # noqa: F401
     AGENTS_DIR,
     FLAVOR_HINTS,

@@ -1,6 +1,8 @@
 """Long-running surfaces: the MCP stdio server, the watcher, the daemon,
 and autostart."""
 
+from __future__ import annotations
+
 import json
 import os
 import shutil
@@ -237,7 +239,10 @@ def single_instance(name: str = "skillgram_watch") -> bool:
     import ctypes
 
     ERROR_ALREADY_EXISTS = 183
-    kernel32 = ctypes.windll.kernel32
+    # `windll` only exists on Windows: the getattr keeps mypy honest on the Linux runner
+    # without a `type: ignore` that would be unused on the Windows one
+    windll = getattr(ctypes, "windll")  # noqa: B009 - platform attribute, not a typo
+    kernel32 = windll.kernel32
     kernel32.CreateMutexW(None, False, f"Local\\{name}")
     return kernel32.GetLastError() != ERROR_ALREADY_EXISTS
 

@@ -1,6 +1,8 @@
 """What is allowed and what is recommended in the hub: the seed list
 (taste) and the policy levels. Pure reads plus the one write (`seed`)."""
 
+from __future__ import annotations
+
 import fnmatch
 import hashlib
 import json
