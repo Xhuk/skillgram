@@ -468,8 +468,36 @@ is cheap, respect is not.
 ## Tests
 
 ```bash
-python -m unittest discover -s tests -v
+python -m unittest discover -s tests -v      # 172 tests, stdlib only
+ruff check . && mypy                         # the static gates CI runs
 ```
+
+The suite runs on Python 3.9, 3.11 and 3.13 in CI. Tests that need a junction skip on
+POSIX; the ones that need `git` or a real harness CLI skip when it is not installed.
+`install` is covered twice: against a stub through the documented
+`SKILLGRAM_MCP_CLI_<HARNESS>` switch, and — when a real CLI is on `PATH` — by asking that
+CLI whether it understands the verb we build (read-only; no config is written).
+
+## How the code is organised
+
+```
+skillgram/hub.py        the store: Hub, links, content hash   <- everything imports this
+skillgram/drift.py      plan / apply / sync / status / clone
+skillgram/scope.py      a project's set: use, mount, align, protocol, .gitignore
+skillgram/govern.py     seeds (taste) and the policy levels
+skillgram/select.py     signals, ranking, bootstrap, missing, propose
+skillgram/lifecycle.py  list, touch, pin, review, retire, export, diff, lint, new, index
+skillgram/harnesses.py  identity, detection, doctor, ledger, MCP registration, install
+skillgram/adopt.py      inventory, onboard, adoption, flavor, precedence
+skillgram/serve.py      MCP stdio server, watcher, daemon, autostart
+skillgram/cli.py        parser, dispatch, renderers, main
+skillgram.py            a six-line shim, so `python skillgram.py <cmd>` keeps working
+```
+
+A module may only import from the layers below it. `HOME` is read through
+`hub.home_dir()`, so one patch point moves the whole tool; nothing captures it at import
+time. `lint --baseline` accepts known debt and fails only on new failures, which is what
+makes the quality gate usable on a corpus that already has history.
 
 ## License
 

@@ -1,10 +1,10 @@
-[build-system]
+﻿[build-system]
 requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "skillgram"
-version = "1.8.0"
+version = "1.9.0"
 description = "Skill management for AI agents: one SKILL.md library (a skill hub and registry) linked into Claude Code, Codex, Cursor, Hermes, Reasonix and any harness that reads skills. No copies, no drift."
 readme = "README.pypi.md"
 requires-python = ">=3.9"
@@ -52,4 +52,8 @@ Homepage = "https://github.com/Xhuk/skillgram"
 Issues = "https://github.com/Xhuk/skillgram/issues"
 
 [tool.setuptools]
-py-modules = ["skillgram"]
+# the implementation is a package; the `skillgram.py` shim at the repository root is a
+# developer convenience and is NOT shipped (a wheel cannot hold a module and a package
+# with the same name)
+packages = ["skillgram"]
+

@@ -1,4 +1,4 @@
-"""skillgram tests — stdlib only: python -m unittest discover -s tests -v"""
+﻿"""skillgram tests â€” stdlib only: python -m unittest discover -s tests -v"""
 
 import contextlib
 import io
@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -36,13 +37,13 @@ class HomeCase(unittest.TestCase):
         self._old_appdata = os.environ.get("APPDATA")
         self._old_env_proj = os.environ.pop(skillgram.PROJECT_ENV, None)
         self._old_cwd = Path.cwd()
-        skillgram.HOME = self.home
+        skillgram.hub.HOME = self.home
         os.environ["APPDATA"] = str(self.tmp / "appdata")
         self.hub_root = self.tmp / "hub"
         self.hub_root.mkdir()
 
     def tearDown(self):
-        skillgram.HOME = self._old_home
+        skillgram.hub.HOME = self._old_home
         if self._old_appdata is None:
             os.environ.pop("APPDATA", None)
         else:
@@ -242,12 +243,12 @@ class TestOnboard(HomeCase):
         reply = json.dumps({"skills": [{"name": "native-one", "harness": "fakeagent",
                                         "category": "design-ui", "flavor": "generic",
                                         "reason": "same tool, other wording"}]})
-        original = skillgram.llm_chat
-        skillgram.llm_chat = lambda cfg, system, user: reply
+        original = skillgram.adopt.llm_chat
+        skillgram.adopt.llm_chat = lambda cfg, system, user: reply
         try:
             refined = skillgram.llm_refine_plan(skillgram.Hub(self.hub_root), plan, {"model": "test"})
         finally:
-            skillgram.llm_chat = original
+            skillgram.adopt.llm_chat = original
         action = refined["actions"][0]
         self.assertEqual(action["category"], "design-ui")
         self.assertEqual(action["reason"], "same tool, other wording")
@@ -761,10 +762,10 @@ class InstallCase(HomeCase):
         self.ledger = self.tmp / "ledger.json"
         os.environ["SKILLGRAM_LEDGER"] = str(self.ledger)
         os.environ["SKILLGRAM_MCP_CMD"] = f"{sys.executable} {self.tmp / 'skillgram.py'} mcp"
-        self._which = skillgram._which
-        self._chain = skillgram.process_chain
-        skillgram._which = lambda name: f"/fake/bin/{name}"
-        skillgram.process_chain = lambda limit=6: []
+        self._which = skillgram.harnesses._which
+        self._chain = skillgram.harnesses.process_chain
+        skillgram.harnesses._which = lambda name: f"/fake/bin/{name}"
+        skillgram.harnesses.process_chain = lambda limit=6: []
         # install/propagate resolve the project from the cwd: a test must never
         # touch the checkout it runs in.
         self.cwd = self.tmp / "cwd"
@@ -772,8 +773,8 @@ class InstallCase(HomeCase):
         os.chdir(self.cwd)
 
     def tearDown(self):
-        skillgram._which = self._which
-        skillgram.process_chain = self._chain
+        skillgram.harnesses._which = self._which
+        skillgram.harnesses.process_chain = self._chain
         for key, value in self._env.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -828,11 +829,11 @@ class TestHarnessIdentity(InstallCase):
         self.assertEqual((got["name"], got["source"]), ("claude-code", "flag"))
 
     def test_process_tree_is_the_last_resort(self):
-        skillgram.process_chain = lambda limit=6: ["explorer.exe", "Cursor.exe"]
+        skillgram.harnesses.process_chain = lambda limit=6: ["explorer.exe", "Cursor.exe"]
         self.assertEqual(skillgram.resolve_harness(None)["name"], "cursor")
 
     def test_unknown_is_reported_never_guessed(self):
-        skillgram.process_chain = lambda limit=6: ["node.exe", "python.exe"]
+        skillgram.harnesses.process_chain = lambda limit=6: ["node.exe", "python.exe"]
         got = skillgram.resolve_harness(None)
         self.assertEqual((got["name"], got["source"]), ("unknown", "unknown"))
 
@@ -897,7 +898,7 @@ class TestMcpDelegation(InstallCase):
         self.assertIn("Settings > MCP", got["detail"])
 
     def test_missing_cli_is_reported_not_faked(self):
-        skillgram._which = lambda name: None
+        skillgram.harnesses._which = lambda name: None
         got = skillgram.register_mcp(skillgram.Hub(self.hub_root), "hermes", apply=True, runner=FakeCli())
         self.assertEqual(got["state"], "not-installed")
         self.assertIn("SKILLGRAM_MCP_CLI_HERMES", got["detail"])
@@ -936,16 +937,16 @@ class TestMcpDelegation(InstallCase):
         os.environ.pop("SKILLGRAM_MCP_CMD", None)
         local = self.tmp / "skillgram.py"
         local.write_text("", encoding="utf-8")
-        skillgram._which = lambda name: str(local)
+        skillgram.harnesses._which = lambda name: str(local)
         argv = skillgram.mcp_launch_argv()
-        self.assertEqual(argv[1], str(Path(skillgram.__file__).resolve()))
+        self.assertEqual(argv, [*skillgram.launch_argv(), "mcp"])
         self.assertEqual(argv[-1], "mcp")
 
     def test_launch_prefers_an_installed_console_script(self):
         os.environ.pop("SKILLGRAM_MCP_CMD", None)
         exe = self.tmp / "skillgram.exe"
         exe.write_text("", encoding="utf-8")
-        skillgram._which = lambda name: str(exe)
+        skillgram.harnesses._which = lambda name: str(exe)
         self.assertEqual(skillgram.mcp_launch_argv(), [str(exe), "mcp"])
 
 
@@ -1070,7 +1071,7 @@ class TestPropagate(InstallCase):
 
     def test_ledger_is_skipped_unless_forced(self):
         a = self.make_repo("a")
-        b = self.make_repo("b")
+        self.make_repo("b")
         hub = skillgram.Hub(self.hub_root)
         data = skillgram.read_ledger()
         data["repos"][skillgram._ledger_key(a)] = {"harness": "codex", "at": "now"}
@@ -1085,7 +1086,7 @@ class TestPropagate(InstallCase):
 
     @unittest.skipUnless(sys.platform == "win32", "junctions: Windows only")
     def test_apply_records_the_ledger(self):
-        repo = self.make_repo("c")
+        self.make_repo("c")
         (self.home / ".codex" / "skills").mkdir(parents=True)
         res = skillgram.propagate(skillgram.Hub(self.hub_root), harness="codex",
                                   root=str(self.tmp / "repos"), apply=True)
@@ -1410,15 +1411,15 @@ class TestCallerIdentity(HomeCase):
     def setUp(self):
         super().setUp()
         self._env = os.environ.get(skillgram.HARNESS_ENV)
-        self._chain = skillgram.process_chain
-        skillgram.process_chain = lambda limit=6: []
+        self._chain = skillgram.harnesses.process_chain
+        skillgram.harnesses.process_chain = lambda limit=6: []
         os.environ.pop(skillgram.HARNESS_ENV, None)
         self.proj = self.tmp / "proj"
         skillgram.init_project("proj", str(self.proj))
         make_skill(self.hub_root, "infra-ops", "deploy")
 
     def tearDown(self):
-        skillgram.process_chain = self._chain
+        skillgram.harnesses.process_chain = self._chain
         if self._env is None:
             os.environ.pop(skillgram.HARNESS_ENV, None)
         else:
@@ -2016,6 +2017,105 @@ class TestClone(HomeCase):
         self.assertIn("not linked", text)
 
 
+class TestRealHarnessCli(HomeCase):
+    """AGENTS.md says the `mcp add` argv shapes were checked against the real CLIs: that
+    was a manual promise. This is the automated half, and it never writes a config -- it
+    asks each installed CLI whether it understands the verb we build.
+    """
+
+    CLIENTS = ("reasonix", "codex", "claude", "hermes", "gemini")
+
+    def test_the_installed_cli_knows_the_verb_we_build(self):
+        found = [(client, shutil.which(client)) for client in self.CLIENTS]
+        found = [(client, path) for client, path in found if path]
+        if not found:
+            self.skipTest("no harness CLI on PATH")
+        for client, path in found:
+            code, out = skillgram.run_cli([path, "mcp", "--help"], timeout=60)
+            self.assertEqual(code, 0, f"{client} mcp --help failed: {out[:200]}")
+            self.assertNotIn("invalid choice", out.lower(), f"{client} has no mcp verb")
+            probe = skillgram.mcp_probe_argv(client, skillgram.MCP_SERVER, path)
+            code, out = skillgram.run_cli(probe, timeout=60)
+            self.assertIn(code, (0, 1), f"{client} probe exited {code}: {out[:200]}")
+            for bad in ("unknown command", "unrecognized"):
+                self.assertNotIn(bad, out.lower(), f"{client}: {out[:200]}")
+
+
+class TestWatch(HomeCase):
+    """`watch` is the only surface that works without being asked, and it had no test:
+    a polling thread that re-syncs when the hub changes.
+    """
+
+    def test_it_links_what_appears_after_it_starts(self):
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        (self.home / ".claude" / "skills").mkdir(parents=True)
+        watcher = skillgram.Watcher(skillgram.Hub(self.hub_root), interval=0.2, quiet=True)
+        watcher.start()
+        try:
+            self.assertTrue(watcher.running)
+            for _ in range(60):
+                if os.path.lexists(self.home / ".claude" / "skills" / "deploy"):
+                    break
+                time.sleep(0.2)
+            self.assertTrue(os.path.lexists(self.home / ".claude" / "skills" / "deploy"),
+                            "the watcher never linked the skill")
+
+            make_skill(self.hub_root, "infra-ops", "review")
+            for _ in range(60):
+                if os.path.lexists(self.home / ".claude" / "skills" / "review"):
+                    break
+                time.sleep(0.2)
+            self.assertTrue(os.path.lexists(self.home / ".claude" / "skills" / "review"),
+                            "the watcher missed a skill that appeared while watching")
+        finally:
+            watcher.stop()
+        self.assertFalse(watcher.running)
+
+
+class TestLintBaseline(HomeCase):
+    """A corpus with legacy failures needs a gate that can be green: the baseline is the
+    accepted debt, and only new failures fail the run.
+    """
+
+    def hub_with_a_bad_skill(self):
+        make_skill(self.hub_root, "infra-ops", "good", "Activation Contract\nbody\n")
+        bad = self.hub_root / "infra-ops" / "bad"
+        bad.mkdir(parents=True)
+        (bad / "SKILL.md").write_text("no frontmatter here\n", encoding="utf-8")
+        return skillgram.Hub(self.hub_root)
+
+    def test_the_debt_is_accepted_and_only_new_errors_fail(self):
+        hub = self.hub_with_a_bad_skill()
+        baseline = self.tmp / "lint-baseline.json"
+
+        self.assertFalse(skillgram.lint_hub(hub)["ok"], "without a baseline the corpus is red")
+
+        # writing the baseline records the debt: from here the same corpus is green
+        skillgram.lint_hub(hub, baseline=baseline, write_baseline=baseline)
+        self.assertTrue(baseline.is_file())
+        again = skillgram.lint_hub(hub, baseline=baseline)
+        self.assertTrue(again["ok"], again["new"])
+        self.assertTrue(again["accepted"])
+        self.assertEqual(again["new"], [])
+
+        fresh = self.hub_root / "infra-ops" / "worse"
+        fresh.mkdir(parents=True)
+        (fresh / "SKILL.md").write_text("---\nname: Nope Name\n---\n", encoding="utf-8")
+        third = skillgram.lint_hub(hub, baseline=baseline)
+        self.assertFalse(third["ok"], "a new failure is not covered by the debt")
+        self.assertEqual([row["skill"] for row in third["new"]], ["worse"])
+
+    def test_the_cli_wires_the_flags(self):
+        self.hub_with_a_bad_skill()
+        baseline = self.tmp / "b.json"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(skillgram.main(["lint", "--json", "--hub", str(self.hub_root)]), 1)
+            self.assertEqual(skillgram.main(["lint", "--json", "--write-baseline", str(baseline),
+                                             "--hub", str(self.hub_root)]), 0)
+            self.assertEqual(skillgram.main(["lint", "--json", "--baseline", str(baseline),
+                                             "--hub", str(self.hub_root)]), 0)
+
+
 class TestMcpThroughTheRealCli(HomeCase):
     """`install` delegates the MCP registration to the harness CLI, and every other
     test injects a Python callable. That leaves the real path unproven: an actual
@@ -2150,8 +2250,7 @@ class TestDaemon(HomeCase):
             "APPDATA": str(self.tmp / "appdata"),
         })
         self.proc = subprocess.Popen(
-            [sys.executable, str(Path(skillgram.__file__).resolve()),
-             "daemon", "--hub", str(self.hub_root)],
+            [*skillgram.launch_argv(), "daemon", "--hub", str(self.hub_root)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace",
             cwd=str(self.tmp), env=env,
@@ -2167,7 +2266,10 @@ class TestDaemon(HomeCase):
             self.proc.kill()
             self.proc.wait(timeout=20)
             self.fail(f"the daemon did not answer in {timeout}s; stderr: {self.proc.stderr.read()[:600]}")
-        self.assertTrue(box["line"], "the daemon closed its stdout")
+        if not box["line"]:
+            self.proc.wait(timeout=20)
+            self.fail(f"the daemon closed its stdout (exit {self.proc.returncode}); "
+                      f"stderr: {self.proc.stderr.read()[:900]}")
         return json.loads(box["line"])
 
     def send(self, line: str) -> dict:
@@ -2203,3 +2305,7 @@ class TestDaemon(HomeCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+

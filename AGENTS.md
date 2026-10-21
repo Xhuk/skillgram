@@ -24,12 +24,36 @@ Keep it that way unless there is a hard reason not to.
 
 ## Layout
 
-    skillgram.py          the whole tool
+    skillgram/            the tool, one module per concern:
+      hub.py              the store: Hub, links, content hash, HOME (via home_dir())
+      drift.py            plan / apply / sync / status / clone
+      scope.py            a project's set: manifest, use, mount, align, protocol, gitignore
+      govern.py           seeds (taste) and the policy levels
+      llm.py              the connected model, one call, one audit log
+      lifecycle.py        list, touch, pin, review, retire, export, import, diff, git,
+                          index, search, demand, lint, new
+      select.py           signals, ranking, bootstrap, missing, propose
+      harnesses.py        identity, detection, doctor, ledger, MCP registration, install
+      adopt.py            inventory, onboard plan/apply, adoption, flavor, precedence
+      serve.py            MCP stdio server, watcher, daemon, autostart
+      cli.py              parser, dispatch, renderers, main
+    skillgram.py          six-line shim so `python skillgram.py <cmd>` works from a
+                          checkout; not shipped in the wheel
     tests/test_*.py       stdlib unittest
+    ruff.toml, mypy.ini   the static gates CI runs
+
+The dependency direction is a DAG with `hub` at the bottom and `cli` at the top: a module
+imports only from the layers below it. `sync` and `onboard` are exported *functions*, so
+their modules are called `drift` and `adopt` — otherwise `__init__` would shadow them.
+
+`HOME` is read through `hub.home_dir()` and never captured at import time: there is one
+patch point (`skillgram.hub.HOME`) and every module follows it. A module that keeps its
+own copy of HOME is a bug, not a style choice.
 
 ## Before committing
 
     python -m unittest discover -s tests -v
+    ruff check . && mypy
     python skillgram.py doctor --json
     python skillgram.py status --json
     python skillgram.py onboard --no-llm --json

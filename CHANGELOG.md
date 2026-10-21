@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.9.0 (unreleased in PyPI) — the file became a package, and the gates exist
+
+The score that was lowest was "maintainability: 5294 lines in one file, zero static
+analysis". Both are gone.
+
+- **One module per concern.** `skillgram/` with `hub`, `drift`, `scope`, `govern`, `llm`,
+  `lifecycle`, `select`, `harnesses`, `adopt`, `serve`, `cli`; dependencies form a DAG
+  with `hub` at the bottom, and `__init__` re-exports the whole old surface so
+  `import skillgram` keeps working. `skillgram.py` stays as a six-line shim for
+  `python skillgram.py <cmd>` from a checkout, and is not shipped in the wheel.
+- **`HOME` is read, not captured.** `hub.home_dir()` is the single patch point; before
+  the split, every module would have kept its own copy and a test that moved HOME would
+  silently leave half the tool on the real one (that bug cost an afternoon: the suite
+  "hung" scanning 50 real harness homes).
+- **Static gates in CI**: a `quality` job runs `ruff` (pycodestyle, pyflakes, bugbear,
+  import order, complexity) and `mypy`, and builds + installs the wheel to prove the
+  packaging. They found real things on the first run: a dead local, an `l` variable, a
+  `dict` literal with `"ok"` written twice (the second silently won), `os.path.isjunction`
+  used on 3.9 without the `getattr` guard, and two string ops on `object`.
+- **`lint --baseline FILE` / `--write-baseline FILE`**: a corpus with legacy failures
+  needs a gate that can be green. The baseline records the accepted debt; only new
+  failures exit 1.
+- **The two untested surfaces now have tests**: `watch` (a real polling thread that links
+  a skill that appears after it starts) and `install` against a **real** harness CLI when
+  one is on `PATH` — read-only: it asks the CLI whether it understands the verb we build,
+  and never writes a config.
+- 172 tests (4 new), `ruff` and `mypy` clean, wheel builds and imports.
+
 ## 1.8.0 (unreleased in PyPI) — `clone` between machines, and `align --hashes`
 
 `export`/`import` moved a hub as a tarball; the README called git under the hub "the

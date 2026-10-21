@@ -7,6 +7,28 @@ on:
   workflow_dispatch:
 
 jobs:
+  quality:
+    # the gate the codebase did not have: a renamed key or a name that no longer
+    # exists is a red run, not a bug that lives for months
+    runs-on: ${{ fromJSON(vars.RUNNER || '["ubuntu-latest"]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the gates
+        run: python -m pip install --quiet ruff mypy
+      - name: ruff (lint, bugbear, imports, complexity)
+        run: ruff check --output-format=github .
+      - name: mypy (names, signatures, returns)
+        run: mypy
+      - name: The packaging still builds a wheel that imports
+        run: |
+          python -m pip install --quiet build
+          python -m build --wheel --outdir dist
+          python -m pip install --quiet dist/*.whl
+          cd /tmp && python -c "import skillgram; print(skillgram.VERSION)" && skillgram --version
+
   test:
     runs-on: ${{ fromJSON(vars.RUNNER || '["ubuntu-latest"]') }}
     strategy:
@@ -20,8 +42,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Run tests
         run: python -m unittest discover -s tests -v
-      - name: CLI smoke
+      - name: The shim and the package both run
         run: |
           python skillgram.py --help
+          python -m skillgram --version
           python skillgram.py status --json
-          python skillgram.py lint --json | head -c 400

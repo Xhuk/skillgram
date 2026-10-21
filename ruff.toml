@@ -1,0 +1,23 @@
+target-version = "py39"
+line-length = 120
+extend-exclude = ["docs", "skills"]
+
+[lint]
+# E/F: pycodestyle and pyflakes. The bugs this session were F821-shaped: a name that
+# no longer exists (`categoria`), a command the CLI never had. C90: complexity, so a
+# function cannot quietly grow to 200 lines again. B: bugbear. I: import order.
+select = ["E", "F", "W", "B", "I", "C90", "UP"]
+ignore = [
+    "E501",   # long lines: the human renderers are tables
+    "UP007",  # `X | Y` stays; `from __future__ import annotations` makes it 3.9-safe
+    "UP035",
+    "B008",
+]
+
+[lint.mccabe]
+max-complexity = 24
+
+[lint.per-file-ignores]
+# the CLI is a flat dispatch table plus table renderers: its width is the design
+"skillgram/cli.py" = ["C901"]
+"tests/*" = ["B", "C90", "E"]
