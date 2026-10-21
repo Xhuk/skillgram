@@ -110,6 +110,15 @@ python skillgram.py install             # harness -&gt; hub -&gt; MCP -&gt; proj
     <div class="card"><b>Idempotent</b><span>Every command prints one JSON line and can run twice without changing anything.</span></div>
   </div>
 
+  <h2>How it operates</h2>
+  <p>Three editorial plates, no screenshots: the loop, the files a mount leaves behind, and the
+  arithmetic that decides which skills a repo is offered.</p>
+  <ul>
+    <li><a href="diagrams/operativity.html#loop">Plate I — the loop, on one page</a></li>
+    <li><a href="diagrams/operativity.html#mount">Plate II — what <code>mount --apply</code> leaves in a repo</a></li>
+    <li><a href="diagrams/operativity.html#ranking">Plate III — how a candidate earns its place</a></li>
+  </ul>
+
   <h2>What it is not</h2>
   <p>Not a prompt manager, not a memory store, not an embeddings index. It links and administers
   skills your agents already read, and it never guesses which harness is asking.</p>

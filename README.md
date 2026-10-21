@@ -415,6 +415,7 @@ is cheap, respect is not.
 | to install on a machine, or hand it to an agent | [INSTALL.md](INSTALL.md) |
 | what changed, version by version | [CHANGELOG.md](CHANGELOG.md) |
 | the install flow as a diagram | [docs/diagrams/skillgram-install.html](docs/diagrams/skillgram-install.html) |
+| how it operates, in three editorial plates | [docs/diagrams/operativity.html](docs/diagrams/operativity.html) |
 | the rules this repo holds itself to | [AGENTS.md](AGENTS.md) |
 | what a skill must contain | [docs/SKILL-CONTRACT.md](docs/SKILL-CONTRACT.md) |
 | how to report something | [skills/skillgram-report](skills/skillgram-report/SKILL.md) |

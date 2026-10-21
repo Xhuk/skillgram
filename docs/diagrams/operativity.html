@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>skillgram — how it operates (three plates)</title>
+<meta name="description" content="Three editorial plates on how skillgram operates: the loop that keeps a library and its agents in agreement, what mount writes inside a repo, and how a candidate earns its place.">
+<link rel="canonical" href="https://xhuk.github.io/skillgram/diagrams/operativity.html">
+<link rel="icon" href="../logo.png">
+<style>
+  :root {
+    --bg: #fbfaf8; --fg: #1b1b1a; --muted: #6b6a66; --line: #e2e0da;
+    --card: #ffffff; --accent: #b5523a; --code: #f2f0ec; --soft: #f6f4f0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141413; --fg: #ecebe6; --muted: #a3a19a; --line: #2c2b28;
+             --card: #1c1c1a; --accent: #e08563; --code: #22221f; --soft: #1a1a18; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 860px; margin: 0 auto; padding: 56px 24px 88px; }
+  h1 { font: 600 30px/1.15 Georgia, "Times New Roman", serif; letter-spacing: -0.01em; margin: 0 0 8px; }
+  .dek { color: var(--muted); margin: 0 0 8px; }
+  .byline { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: 0.09em;
+            border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+            padding: 8px 0; margin: 24px 0 40px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre, .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+  code { background: var(--code); padding: 2px 5px; border-radius: 4px; font-size: 0.9em; }
+  figure { margin: 0 0 56px; }
+  figcaption { display: block; }
+  .plate-no { font: 600 13px/1 ui-monospace, monospace; letter-spacing: 0.18em; color: var(--accent);
+              text-transform: uppercase; }
+  .plate-title { font: 600 24px/1.2 Georgia, "Times New Roman", serif; margin: 8px 0 6px; }
+  .plate-dek { color: var(--muted); margin: 0 0 18px; max-width: 68ch; }
+  .frame { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+  svg { width: 100%; height: auto; display: block; }
+  svg text { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .lbl { fill: var(--fg); font-size: 12px; }
+  .sub { fill: var(--muted); font-size: 10.5px; letter-spacing: 0.02em; }
+  .tag { fill: var(--muted); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; }
+  .tag.on { fill: var(--accent); }
+  .box { fill: var(--soft); stroke: var(--line); stroke-width: 1; }
+  .box-hub { fill: var(--card); stroke: var(--fg); stroke-width: 1.2; }
+  .rule { stroke: var(--line); stroke-width: 1; }
+  .flow { stroke: var(--muted); stroke-width: 1.2; fill: none; }
+  .live { stroke: var(--accent); stroke-width: 1.4; fill: none; }
+  .mk-flow { fill: var(--muted); }
+  .mk-live { fill: var(--accent); }
+  .num { fill: var(--accent); font-size: 10px; }
+  .num-ring { fill: none; stroke: var(--accent); stroke-width: 1; }
+  ol.legend { margin: 18px 0 0; padding: 0; list-style: none; counter-reset: step; }
+  ol.legend li { counter-increment: step; position: relative; padding-left: 30px; margin: 0 0 8px;
+                 color: var(--muted); font-size: 14.5px; }
+  ol.legend li::before { content: counter(step); position: absolute; left: 0; top: 1px;
+                         width: 19px; height: 19px; border: 1px solid var(--accent); border-radius: 50%;
+                         color: var(--accent); font: 600 11px/19px ui-monospace, monospace; text-align: center; }
+  ol.legend b { color: var(--fg); font-weight: 600; }
+  .spread { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+  @media (max-width: 720px) { .spread { grid-template-columns: 1fr; } }
+  pre.tree { background: none; border: 0; padding: 0; margin: 0; font-size: 12px; line-height: 1.85;
+             overflow-x: auto; }
+  pre.tree .dim { color: var(--muted); }
+  pre.tree .hit { color: var(--accent); }
+  .notes { font-size: 14px; color: var(--muted); }
+  .notes dt { font-weight: 600; color: var(--fg); margin-top: 14px; }
+  .notes dt:first-child { margin-top: 0; }
+  .notes dd { margin: 2px 0 0; }
+  .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px;
+            border: 1px solid var(--line); vertical-align: baseline; }
+  .swatch.in { background: var(--fg); border-color: var(--fg); }
+  .swatch.out { background: transparent; }
+  table.score { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.score th { text-align: left; font: 600 11px/1.4 ui-monospace, monospace; letter-spacing: 0.12em;
+                   text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line);
+                   padding: 0 8px 8px 0; }
+  table.score td { padding: 9px 8px 9px 0; border-bottom: 1px solid var(--line);
+                   font-variant-numeric: tabular-nums; }
+  table.score td.n { text-align: right; width: 5.5em; }
+  table.score tr.drop td { color: var(--muted); }
+  table.score tr.keep td:first-child { color: var(--accent); }
+  .foot { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 18px; color: var(--muted); font-size: 14px; }
+  .foot a { margin-right: 16px; }
+</style>
+</head>
+<body>
+<main>
+
+  <h1>How skillgram operates</h1>
+  <p class="dek">Three plates. No screenshots, no runtime required: the loop, the files it writes,
+  and the arithmetic that decides which skills a repo is offered.</p>
+  <div class="byline">
+    <span>skillgram 1.5.0</span>
+    <span>links, never copies</span>
+    <span>stdlib only</span>
+    <span><a href="../">← back to the summary</a></span>
+  </div>
+
+  <!-- ─────────────────────────────── PLATE I ─────────────────────────────── -->
+  <figure id="loop">
+    <figcaption>
+      <span class="plate-no">Plate I</span>
+      <div class="plate-title">The loop, on one page</div>
+      <p class="plate-dek">The library is the store; a project is a view of it; the usage record is
+      what the view remembers. Everything below is a command you can run, not a dataflow diagram of
+      internals.</p>
+    </figcaption>
+
+    <div class="frame">
+    <svg viewBox="0 0 820 400" role="img" aria-label="Hub, harnesses, project scope, usage record and seeds forming a loop">
+      <defs>
+        <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path class="mk-flow" d="M 0 0 L 10 5 L 0 10 z"/>
+        </marker>
+        <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path class="mk-live" d="M 0 0 L 10 5 L 0 10 z"/>
+        </marker>
+      </defs>
+
+      <!-- 01 · the store -->
+      <text class="tag" x="16" y="22">01 · store</text>
+      <rect class="box-hub" x="16" y="34" width="196" height="150" rx="8"/>
+      <text class="lbl" x="32" y="58">~/.agents/skills</text>
+      <text class="sub" x="32" y="80">&lt;category&gt;/&lt;skill&gt;/</text>
+      <text class="sub" x="32" y="98">SKILL.md · the only copy</text>
+      <text class="sub" x="32" y="116">SKILLMETA.json · hash</text>
+      <line class="rule" x1="32" y1="130" x2="196" y2="130"/>
+      <text class="sub" x="32" y="150">one file, every harness</text>
+      <text class="sub" x="32" y="168">reads it as its own</text>
+
+      <!-- 02 · the views -->
+      <text class="tag" x="300" y="22">02 · views</text>
+      <rect class="box" x="300" y="34" width="200" height="34" rx="6"/>
+      <text class="lbl" x="314" y="56">Reasonix</text>
+      <text class="sub" x="488" y="56" text-anchor="end">.reasonix/skills</text>
+      <rect class="box" x="300" y="78" width="200" height="34" rx="6"/>
+      <text class="lbl" x="314" y="100">Claude Code</text>
+      <text class="sub" x="488" y="100" text-anchor="end">.claude/skills</text>
+      <rect class="box" x="300" y="122" width="200" height="34" rx="6"/>
+      <text class="lbl" x="314" y="144">Codex</text>
+      <text class="sub" x="488" y="144" text-anchor="end">.codex/skills</text>
+      <text class="sub" x="300" y="178">+ 51 more, same library</text>
+
+      <path class="flow" d="M 212 62 C 256 62, 258 51, 298 51" marker-end="url(#a)"/>
+      <path class="flow" d="M 212 104 L 298 95" marker-end="url(#a)"/>
+      <path class="flow" d="M 212 132 C 256 132, 258 139, 298 139" marker-end="url(#a)"/>
+      <text class="tag" x="222" y="200">links</text>
+
+      <!-- 03 · the set -->
+      <text class="tag" x="600" y="22">03 · the set</text>
+      <rect class="box" x="600" y="34" width="204" height="150" rx="8"/>
+      <text class="lbl" x="616" y="58">&lt;repo&gt;/.agents</text>
+      <text class="sub" x="616" y="80">config.json · project name</text>
+      <text class="sub" x="616" y="98">skills.json · the set,</text>
+      <text class="sub" x="616" y="114">with hashes</text>
+      <text class="sub" x="616" y="132">skills/&lt;name&gt; → link</text>
+      <line class="rule" x1="616" y1="146" x2="788" y2="146"/>
+      <text class="sub" x="616" y="166">committed · the memory</text>
+
+      <path class="live" d="M 500 139 C 552 139, 556 108, 598 108" marker-end="url(#b)"/>
+      <text class="tag on" x="506" y="126">mount</text>
+
+      <!-- 04 · what it remembers -->
+      <text class="tag" x="600" y="228">04 · the record</text>
+      <rect class="box" x="600" y="240" width="204" height="76" rx="8"/>
+      <text class="sub" x="616" y="262">use_count · last_used</text>
+      <text class="sub" x="616" y="280">last_used_by · by_harness</text>
+      <text class="sub" x="616" y="302">declared, never observed</text>
+      <path class="live" d="M 702 184 L 702 238" marker-end="url(#b)"/>
+      <text class="tag on" x="710" y="214">touch</text>
+      <text class="sub" x="600" y="336">the next session reads this file</text>
+
+      <!-- 05 · taste -->
+      <text class="tag" x="16" y="228">05 · taste</text>
+      <rect class="box" x="16" y="240" width="196" height="76" rx="8"/>
+      <text class="lbl" x="32" y="262">skillgram seed</text>
+      <text class="sub" x="32" y="282">qring-anti-slop</text>
+      <text class="sub" x="32" y="302">always recommended</text>
+
+      <path class="live" d="M 212 278 L 266 278" marker-end="url(#b)"/>
+      <rect class="box" x="270" y="258" width="132" height="40" rx="20"/>
+      <text class="lbl" x="286" y="283">bootstrap</text>
+      <path class="live" d="M 402 268 C 470 240, 520 200, 598 170" marker-end="url(#b)"/>
+      <text class="sub" x="446" y="300">signals + seeds → the set</text>
+    </svg>
+
+    <ol class="legend">
+      <li><b>One store.</b> Every skill exists once, in the hub. Nothing is copied into an agent.</li>
+      <li><b>Views, not copies.</b> Each harness gets links into that store, so fifty agents cannot drift from each other.</li>
+      <li><b>The set is a project file.</b> <code>use</code> writes <code>.agents/skills.json</code>; <code>mount</code> materialises it in every harness layout the project needs.</li>
+      <li><b>The record is declared.</b> <code>touch</code> and <code>use</code> write who used what, from which harness. skillgram cannot see what an agent reads, and never pretends to.</li>
+      <li><b>Taste is explicit.</b> A seed (<code>skillgram seed &lt;skill&gt;</code>) outranks the ranking in every future <code>bootstrap</code>; <code>--never</code> does the opposite.</li>
+    </ol>
+    </div>
+  </figure>
+
+  <!-- ─────────────────────────────── PLATE II ────────────────────────────── -->
+  <figure id="mount">
+    <figcaption>
+      <span class="plate-no">Plate II</span>
+      <div class="plate-title">What <code>mount --apply</code> leaves in a repo</div>
+      <p class="plate-dek">The dangerous part of a link is that git does not know what one is: it
+      sees a directory and would commit the skill as a copy. So the scope is tracked and the links
+      are not.</p>
+    </figcaption>
+
+    <div class="frame">
+      <div class="spread">
+<pre class="tree">&lt;repo&gt;/
+├── AGENTS.md                          <span class="hit">+ protocol block</span>
+├── .gitignore                         <span class="hit">+ links block</span>
+├── .agents/
+│   ├── config.json                    <span class="dim">tracked · project name</span>
+│   ├── skills.json                    <span class="dim">tracked · the set + hashes</span>
+│   └── skills/deploy → hub            <span class="dim">link · ignored</span>
+├── .claude/skills/deploy → hub        <span class="dim">link · ignored</span>
+├── .codex/skills/deploy → hub         <span class="dim">link · ignored</span>
+├── .cursor/skills/deploy → hub        <span class="dim">link · ignored</span>
+└── … one dir per installed harness</pre>
+
+        <dl class="notes">
+          <dt><span class="swatch in"></span>Tracked</dt>
+          <dd>The two JSON files are the project's memory: what it has, with the hash that detects
+          drift. Commit them — that is what the next harness reads.</dd>
+
+          <dt><span class="swatch out"></span>Ignored</dt>
+          <dd>A delimited block in <code>.gitignore</code> covers every directory the mount writes,
+          so <code>git add -A</code> cannot turn a link into a copy. Idempotent; delete the block to
+          undo it.</dd>
+
+          <dt>Protocol</dt>
+          <dd>The block between <code>&lt;!-- skillgram:protocol:begin --&gt;</code> markers tells any
+          agent, in any harness, to read the record before choosing and to declare what it used.</dd>
+
+          <dt>Reversible</dt>
+          <dd><code>skillgram unuse &lt;skill&gt;…</code> drops links and manifest entries; nothing
+          in the hub is touched.</dd>
+        </dl>
+      </div>
+    </div>
+  </figure>
+
+  <!-- ────────────────────────────── PLATE III ────────────────────────────── -->
+  <figure id="ranking">
+    <figcaption>
+      <span class="plate-no">Plate III</span>
+      <div class="plate-title">How a candidate earns its place</div>
+      <p class="plate-dek">Deterministic scoring, no model in the loop: where a tag appears decides
+      its weight, anything under the line is dropped instead of padding the list, and a seed comes
+      first whatever its score.</p>
+    </figcaption>
+
+    <div class="frame">
+      <div class="spread">
+        <div>
+          <table class="score">
+            <tr><th>Where the tag appears</th><th class="n">Weight</th></tr>
+            <tr class="keep"><td>skill <b>name</b></td><td class="n">3</td></tr>
+            <tr><td>skill <b>category</b></td><td class="n">2</td></tr>
+            <tr><td>body of <code>SKILL.md</code></td><td class="n">1</td></tr>
+            <tr class="drop"><td>below <b>2</b> — dropped</td><td class="n">—</td></tr>
+          </table>
+
+          <table class="score" style="margin-top:26px">
+            <tr><th>Real repo: go + vite + react</th><th class="n">before</th><th class="n">after</th></tr>
+            <tr class="keep"><td>a React skill by name</td><td class="n">tie</td><td class="n">1st</td></tr>
+            <tr><td>a body-only mention</td><td class="n">tie</td><td class="n">—</td></tr>
+            <tr class="drop"><td>godmode <span class="sub">(“go” as a fragment)</span></td><td class="n">listed</td><td class="n">gone</td></tr>
+            <tr class="drop"><td>nodejs-keccak256 <span class="sub">(for React)</span></td><td class="n">listed</td><td class="n">gone</td></tr>
+            <tr><td>a seeded skill</td><td class="n">—</td><td class="n">first</td></tr>
+          </table>
+        </div>
+
+        <dl class="notes">
+          <dt>A tag is a word</dt>
+          <dd><code>go</code> matches <code>golang-patterns</code> and not <code>godmode</code>;
+          <code>ts</code> matches <code>typescript</code>; <code>node</code> does not match
+          <code>nodejs-keccak256</code>. Aliases handle the tags that are not words.</dd>
+
+          <dt>Signals are the repo's, not the root's</dt>
+          <dd>Manifests from the root and its immediate subdirectories
+          (<code>backend/go.mod</code>, <code>frontend/package.json</code>), and only dependencies
+          that name a stack become tags. A flattened lockfile in <code>dependencies</code> is not a
+          stack.</dd>
+
+          <dt>Ties break on evidence</dt>
+          <dd>Score, then how many distinct tags matched, then the shorter name. Alphabetical order
+          is never the reason a skill is recommended.</dd>
+
+          <dt>Taste overrules</dt>
+          <dd><code>seed</code> is a decision, so it is not scored: the seeded skill is offered
+          first, and <code>bootstrap --apply</code> promotes it even with no LLM configured.</dd>
+        </dl>
+      </div>
+    </div>
+  </figure>
+
+  <div class="foot">
+    <a href="../">summary</a>
+    <a href="https://github.com/Xhuk/skillgram/blob/main/README.md">README</a>
+    <a href="https://github.com/Xhuk/skillgram/blob/main/CHANGELOG.md">changelog</a>
+    <a href="skillgram-install.html">the install flow, interactive</a>
+  </div>
+
+</main>
+</body>
+</html>
