@@ -328,22 +328,82 @@ SECRET_PATTERNS = (
 
 PLACEHOLDERS = ("TODO", "TBD", "FIXME", "XXX-PLACEHOLDER")
 
+# A placeholder is a *marker*, not the word. A skill that says "mark unknowns as TBD with an
+# owner" is being honest; a skill that says "TODO: fill this in" is not finished. Only the
+# marker shapes fail: the word starting a line, a table cell, or a `Label: WORD` value.
+_PLACEHOLDER_LINE = re.compile(
+    r"^[\s>#*+\-`\[]*(?P<word>" + "|".join(PLACEHOLDERS) + r")\b(?![/(])", re.MULTILINE)
+_PLACEHOLDER_CELL = re.compile(
+    r"\|\s*(?P<word>" + "|".join(PLACEHOLDERS) + r")\s*\|")
+_PLACEHOLDER_LABEL = re.compile(
+    r"\b(?:" + "|".join(PLACEHOLDERS) + r")\s*:\s*(?:$|[^/\w])", re.MULTILINE)
+
+
+def _placeholder_hits(text: str, front: dict | None = None) -> list:
+    """The placeholders a reader would call unfinished, with the shape that matched."""
+    hits = []
+    for match in _PLACEHOLDER_LINE.finditer(text):
+        hits.append(f"{match.group('word')} starts a line")
+    for match in _PLACEHOLDER_CELL.finditer(text):
+        hits.append(f"{match.group('word')} is a table cell")
+    for key in ("description", "name"):
+        value = ((front or {}).get(key) or "").strip().strip('"').strip("'")
+        if value:
+            first = value.split(" ", 1)[0].rstrip(":.,(")
+            if first in PLACEHOLDERS:
+                hits.append(f"{first} is the whole {key}")
+    for match in _PLACEHOLDER_LABEL.finditer(text):
+        hits.append(f"{match.group(0).split(':')[0].strip()} used as a label")
+    return list(dict.fromkeys(hits))
+
 
 LOCAL_PATH = re.compile(r"C:\\Users|C:/Users|/home/[A-Za-z0-9._-]+/|/Users/[A-Za-z0-9._-]+/")
 
+# `../<slug>/SKILL.md` only works when every skill sits in one flat directory. The hub keeps
+# categories, so a path like that resolves to a sibling category and nothing else: name the
+# skill instead. This is the check that would have caught a whole pack of dead links.
+CROSS_LINK = re.compile(r"\.\./([A-Za-z0-9._-]+)/(SKILL\.md)?")
+
 
 def _frontmatter(text: str) -> dict:
-    """Parseo minimo del frontmatter YAML (clave: valor de una linea)."""
+    """The YAML this tool actually writes: `key: value`, quoted values, and the block
+    scalars `>`/`>-`/`|`/`|-` (a description that spans lines).
+
+    It is not a YAML parser, on purpose: the contract needs `name` and `description`, and a
+    real parser would drag a dependency into a stdlib-only tool. What it must not do is
+    mistake `description: >-` for a two-character description â€” that turns the gate into a
+    liar for every file written the readable way.
+    """
     text = text.lstrip("\ufeff")  # a BOM from a Windows editor is not "no frontmatter"
-    out = {}
+    out: dict = {}
     if not text.startswith("---"):
         return out
+    key, block, style = None, [], ""
+
+    def flush() -> None:
+        nonlocal key, block, style
+        if key is not None:
+            joiner = "\n" if style.startswith("|") else " "
+            out[key] = joiner.join(part.strip() for part in block if part.strip()).strip()
+        key, block, style = None, [], ""
+
     for line in text.splitlines()[1:]:
         if line.strip() == "---":
+            flush()
             break
-        if ":" in line and not line.startswith((" ", "\t")):
-            key, _, val = line.partition(":")
-            out[key.strip().lower()] = val.strip().strip('"').strip("'")
+        if line.startswith((" ", "\t")):
+            if key is not None:
+                block.append(line)
+            continue
+        if ":" not in line:
+            continue
+        flush()
+        name, _, val = line.partition(":")
+        val = val.strip()
+        if val in {">", ">-", ">+", "|", "|-", "|+"}:
+            key, style = name.strip().lower(), val
+        else:
+            out[name.strip().lower()] = val.strip('"').strip("'")
     return out
 
 
@@ -363,7 +423,34 @@ def _sections(text: str) -> dict:
     return out
 
 
-def lint_skill(skill_dir: Path, require_contract: bool = False) -> dict:
+def _reference_warnings(text: str, skill_dir: Path, known: dict | None) -> list:
+    """Pointers in the skill text that do not resolve: a missing folder, a broken skill link.
+
+    A skill that names a file it does not ship, or a sibling that lives in another category,
+    reads as complete and is not. This is the check the AD3 pack needed for a year.
+    """
+    warnings = []
+    for ref in ("references/", "scripts/", "assets/"):
+        # a *skill-relative* folder: `assets/` counts, `typst/assets/` is a path in the host
+        if re.search(r"(?<![\w/.-])" + re.escape(ref), text) and not (skill_dir / ref.strip("/")).is_dir():
+            warnings.append(f"mentions {ref} but the folder does not exist")
+    if known is None:
+        return warnings
+    for match in CROSS_LINK.finditer(text):
+        target, explicit = match.group(1), bool(match.group(2))
+        if (skill_dir.parent / target).is_dir():
+            continue  # a real sibling: the relative path resolves, nothing to say
+        if target in known:
+            warnings.append(f"`../{target}/` assumes a flat layout: that skill lives in "
+                            f"`{known[target]}`; reference it by name")
+        elif explicit:
+            # only an explicit `../x/SKILL.md` claims a skill exists; `../references/` in the
+            # middle of a sentence is a path in the host, and not our business
+            warnings.append(f"`../{target}/SKILL.md` does not resolve: no skill by that name here")
+    return warnings
+
+
+def lint_skill(skill_dir: Path, require_contract: bool = False, known: dict | None = None) -> dict:
     """Errores duros y avisos de una skill.
 
     `require_contract` is the authoring gate: the five sections of
@@ -401,11 +488,7 @@ def lint_skill(skill_dir: Path, require_contract: bool = False) -> dict:
         errors.append(f"body has {len(body_lines)} non-empty lines (min {MIN_BODY_LINES})")
     elif len(body_lines) > MAX_BODY_LINES:
         warnings.append(f"body has {len(body_lines)} non-empty lines (max {MAX_BODY_LINES})")
-    for ref in ("references/", "scripts/", "assets/"):
-        if ref in text:
-            d = skill_dir / ref.strip("/")
-            if not d.is_dir():
-                warnings.append(f"mentions {ref} but the folder does not exist")
+    warnings.extend(_reference_warnings(text, skill_dir, known))
 
     sections = _sections(text)
     for wanted in CONTRACT_SECTIONS:
@@ -418,9 +501,8 @@ def lint_skill(skill_dir: Path, require_contract: bool = False) -> dict:
     for label, pattern in SECRET_PATTERNS:
         if re.search(pattern, text):
             errors.append(f"looks like a live credential ({label})")
-    for word in PLACEHOLDERS:
-        if word in text:
-            errors.append(f"placeholder left in the text ({word})")
+    for hit in _placeholder_hits(text, fm):
+        errors.append(f"placeholder left in the text ({hit})")
     if LOCAL_PATH.search(text):
         warnings.append("mentions a local absolute path (the skill stops being portable)")
     return {"skill": skill_dir.name, "errors": errors, "warnings": warnings,
@@ -443,7 +525,7 @@ def lint_hub(hub: Hub, only: str | None = None, strict: bool = False, contract: 
         if not tipo:
             rows.append({"skill": name, "errors": ["not found in the hub"], "warnings": []})
             continue
-        rows.append(lint_skill(hub.root / tipo / name, require_contract=contract))
+        rows.append(lint_skill(hub.root / tipo / name, require_contract=contract, known=known))
     with_errors = [r for r in rows if r["errors"]]
     with_warnings = [r for r in rows if r["warnings"]]
     accepted: list[str] = []

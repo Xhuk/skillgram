@@ -20,7 +20,14 @@ from washing away. The second one is this repo's own refactor, generalised.
 - `SKILLMETA.json` gains `source.kind = bundled` with the version it came from.
 - The provenance helpers (`SKILL_META`, `skill_meta`, `write_skill_meta`) moved to `hub.py`:
   only the base layer can write them without an import cycle.
-- 185 tests (`TestBundledSkills`), `ruff` and `mypy` clean.
+- **The lint gate stopped lying in three places**, all found while repairing the AD3 pack:
+  - it reads YAML block scalars (`description: >-`), so a description written the readable way
+    is no longer measured as the two characters `>-`;
+  - a placeholder is a *marker* (start of line, table cell, the whole description), not the
+    word: "mark unknowns as TBD with an owner" is an honest rule and now passes;
+  - a `../<skill>/` link is checked against the hub: 6 of 847 skills pointed at a sibling
+    category and nothing else. Naming the skill is the fix, and `lint` says which category.
+- 193 tests (`TestBundledSkills`, `TestLintParsesWhatWeWrite`), `ruff` and `mypy` clean.
 
 
 

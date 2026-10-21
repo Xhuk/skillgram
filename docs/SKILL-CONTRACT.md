@@ -23,6 +23,10 @@ description: One sentence, <=140 chars, saying WHEN it applies, not what it is a
 | `description` | ≤140 chars, ≥20 chars, states the trigger | error / warning |
 | anything else | allowed (`license`, `metadata`) | not checked |
 
+The description may be a single line, a quoted string, or a block scalar (`description: >-`
+followed by an indented paragraph) — `lint` reads all three, because writing a long trigger on
+one line is how descriptions become 300 characters of prose.
+
 A description that works: *"Use when a Docker build fails on a native dependency in CI."*
 A description that does not: *"Docker things."*
 
@@ -44,8 +48,11 @@ heading followed by nothing is a lie about completeness.
 - **Credentials.** No live-looking secrets. `lint` matches narrow, real shapes (a `sk_live_` key,
   a PyPI token, a 40+ char `ghp_`, an AWS key id, a PEM header *with* a base64 body, a full JWT).
   Placeholders like `ghp_xxx` and a bare PEM banner are documentation and pass.
-- **Placeholders.** `TODO`, `TBD`, `FIXME` anywhere in the file. A scaffold that still says TODO is
-  not a skill yet — that is exactly why `new` writes them and `lint` refuses them.
+- **Placeholders.** A placeholder *marker*: the word starting a line, a whole table cell, a
+  `Label: WORD` value, or the description itself. A scaffold that still says `TODO:` is not a
+  skill yet — that is why `new` writes them and `lint` refuses them. Naming the concept is
+  documentation and passes: "mark unknowns as **TBD with an owner**" is an honest rule, and a
+  gate that refuses it teaches people to write worse skills.
 - **Uniqueness.** A name that already exists in the hub with different content is a conflict, not an
   update; `skillgram diff <name> --against <path>` shows the difference before anyone overwrites.
 
@@ -56,7 +63,11 @@ heading followed by nothing is a lie about completeness.
 - a local absolute path (`C:\Users\...`, `/home/...`) — the skill stops being portable;
 - more than 400 non-empty lines — the reader scrolls past the point;
 - a `references/`, `scripts/` or `assets/` mention without that folder;
-- a name that differs from its folder (an error once you are authoring with `--contract`).
+- a name that differs from its folder (an error once you are authoring with `--contract`);
+- a `../<skill>/` link to a skill that lives in another category. The hub keeps categories, so a
+  relative path resolves only inside one folder: name the skill instead (`good-taste-ui`
+  (design-ui)). Six of the hub's 847 skills had this; they were invisible until something
+  checked.
 
 `lint --strict` turns warnings into a failure, which is what CI should run.
 

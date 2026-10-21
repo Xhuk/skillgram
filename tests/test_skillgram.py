@@ -1,4 +1,4 @@
-"""skillgram tests â€” stdlib only: python -m unittest discover -s tests -v"""
+﻿"""skillgram tests Ã¢â‚¬â€ stdlib only: python -m unittest discover -s tests -v"""
 
 import ast
 import contextlib
@@ -1113,6 +1113,69 @@ class TestPropagate(InstallCase):
                                   root=str(self.hub_root), apply=False)
         self.assertEqual(res["rows"], [])
         self.assertEqual(res["ignored_hub"], [str(self.hub_root.resolve())])
+
+
+class TestLintParsesWhatWeWrite(HomeCase):
+    """The gate has to understand the YAML people actually write, or it lies."""
+
+    def skill(self, front: str, body: str = "") -> Path:
+        d = self.hub_root / "infra-ops" / "probe"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text(front + "\n" + (body or "\n## Activation Contract\n\nUse when: x\n"),
+                                    encoding="utf-8")
+        return d
+
+    def test_a_block_scalar_description_is_read_whole(self):
+        # `description: >-` is the readable way to write a long description; the first
+        # parser read it as the two characters ">-" and failed the file
+        d = self.skill("---\nname: probe\ndescription: >-\n  Use when a build fails on a\n"
+                       "  native dependency in CI.\n---")
+        fm = skillgram._frontmatter((d / "SKILL.md").read_text(encoding="utf-8"))
+        self.assertEqual(fm["description"], "Use when a build fails on a native dependency in CI.")
+        self.assertEqual(skillgram.lint_skill(d)["errors"], [])
+
+    def test_a_literal_block_keeps_its_lines(self):
+        d = self.skill("---\nname: probe\ndescription: |\n  line one\n  line two\n---")
+        fm = skillgram._frontmatter((d / "SKILL.md").read_text(encoding="utf-8"))
+        self.assertEqual(fm["description"], "line one\nline two")
+
+    def test_a_quoted_description_still_works(self):
+        d = self.skill('---\nname: probe\ndescription: "Use when a query is slow."\n---')
+        fm = skillgram._frontmatter((d / "SKILL.md").read_text(encoding="utf-8"))
+        self.assertEqual(fm["description"], "Use when a query is slow.")
+
+    def test_naming_tbd_as_a_concept_is_not_a_placeholder(self):
+        # an honest instruction ("mark unknowns as TBD with an owner") is not unfinished work
+        body = ("\n## Activation Contract\n\nUse when: a spec has gaps.\n\n"
+                "- Mark unknowns as **TBD with an owner and the decision needed**.\n"
+                "- Status: TBD is not a state we ship in, so say who decides.\n")
+        d = self.skill("---\nname: probe\ndescription: Use when a spec still has gaps.\n---", body)
+        self.assertEqual(skillgram.lint_skill(d)["errors"], [])
+
+    def test_a_real_placeholder_still_fails(self):
+        for body in ("\nTODO write the rest\n", "\nTBD\n", "\n| Observation | Do this |\n|---|---|\n| TBD | TBD |\n"):
+            d = self.skill("---\nname: probe\ndescription: Use when a spec still has gaps.\n---", body)
+            self.assertTrue(any("placeholder" in e for e in skillgram.lint_skill(d)["errors"]), body)
+
+    def test_a_description_that_is_only_a_placeholder_fails(self):
+        d = self.skill("---\nname: probe\ndescription: TODO say when this applies\n---")
+        self.assertTrue(any("placeholder" in e for e in skillgram.lint_skill(d)["errors"]))
+
+    def test_a_flat_layout_link_to_a_skill_in_a_category_is_reported(self):
+        # `../other/SKILL.md` only resolves when every skill sits in one directory; the hub
+        # has categories, so the link points at a sibling category and nothing else
+        make_skill(self.hub_root, "dev-practices", "other")
+        d = self.skill("---\nname: probe\ndescription: Use when a spec still has gaps.\n---",
+                       "\nSee `../other/SKILL.md`.\n")
+        res = skillgram.lint_skill(d, known={"other": "dev-practices"})
+        self.assertTrue(any("flat layout" in w and "dev-practices" in w for w in res["warnings"]),
+                        res["warnings"])
+
+    def test_a_link_to_nothing_is_reported(self):
+        d = self.skill("---\nname: probe\ndescription: Use when a spec still has gaps.\n---",
+                       "\nSee `../ghost/SKILL.md`.\n")
+        res = skillgram.lint_skill(d, known={"other": "dev-practices"})
+        self.assertTrue(any("does not resolve" in w for w in res["warnings"]), res["warnings"])
 
 
 class TestCliSurface(HomeCase):
