@@ -1311,6 +1311,76 @@ class TestUsageAcrossHarnesses(HomeCase):
         self.assertEqual(row["by_harness"], {"claude": 1})
 
 
+class TestCallerIdentity(HomeCase):
+    """The usage record has to name the mask that was on: `use` wrote the constant
+    "agent", so `by_harness` could never answer "which agent was I using this from".
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._env = os.environ.get(skillgram.HARNESS_ENV)
+        self._chain = skillgram.process_chain
+        skillgram.process_chain = lambda limit=6: []
+        os.environ.pop(skillgram.HARNESS_ENV, None)
+        self.proj = self.tmp / "proj"
+        skillgram.init_project("proj", str(self.proj))
+        make_skill(self.hub_root, "infra-ops", "deploy")
+
+    def tearDown(self):
+        skillgram.process_chain = self._chain
+        if self._env is None:
+            os.environ.pop(skillgram.HARNESS_ENV, None)
+        else:
+            os.environ[skillgram.HARNESS_ENV] = self._env
+        super().tearDown()
+
+    def tally(self) -> dict:
+        entry = skillgram._read_manifest(self.proj)["skills"]["deploy"]
+        return dict(entry.get("by_harness") or {})
+
+    def run_cli(self, *argv):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = skillgram.main([str(a) for a in argv])
+        return code, json.loads(buf.getvalue().strip().splitlines()[-1])
+
+    def test_use_records_the_resolved_harness(self):
+        os.environ[skillgram.HARNESS_ENV] = "claude"
+        code, out = self.run_cli("use", "deploy", "--json", "--hub", self.hub_root, "--project", self.proj)
+        self.assertEqual(code, 0, out)
+        # the canonical name, so an alias and the harness itself land in one bucket
+        canonical = skillgram.normalize_harness("claude")
+        self.assertEqual(out["by"], canonical)
+        self.assertEqual(self.tally(), {canonical: 1})
+
+    def test_use_falls_back_to_agent_when_nothing_knows(self):
+        code, out = self.run_cli("use", "deploy", "--json", "--hub", self.hub_root, "--project", self.proj)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out["by"], "agent")
+        self.assertEqual(self.tally(), {"agent": 1})
+
+    def test_an_explicit_by_wins(self):
+        os.environ[skillgram.HARNESS_ENV] = "claude"
+        code, out = self.run_cli("use", "deploy", "--by", "codex", "--json",
+                                 "--hub", self.hub_root, "--project", self.proj)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out["by"], "codex")
+        self.assertEqual(self.tally(), {"codex": 1})
+
+    def test_the_mcp_path_records_the_harness_too(self):
+        os.environ[skillgram.HARNESS_ENV] = "reasonix"
+        hub = skillgram.Hub(self.hub_root)
+        used = skillgram.mcp_call(hub, "skillgram_use", {"skills": ["deploy"], "project": str(self.proj)})
+        self.assertEqual(used["by"], "reasonix")
+        self.assertEqual(used["uso"], ["deploy"])
+        skillgram.mcp_call(hub, "skillgram_touch", {"skills": ["deploy"], "project": str(self.proj)})
+        self.assertEqual(self.tally(), {"reasonix": 2})
+        explicit = skillgram.mcp_call(hub, "skillgram_touch",
+                                      {"skills": ["deploy"], "project": str(self.proj), "by": "codex"})
+        self.assertEqual(explicit["by"], "codex")
+        self.assertEqual(self.tally(), {"reasonix": 2, "codex": 1})
+
+
 class TestMcpThroughTheRealCli(HomeCase):
     """`install` delegates the MCP registration to the harness CLI, and every other
     test injects a Python callable. That leaves the real path unproven: an actual

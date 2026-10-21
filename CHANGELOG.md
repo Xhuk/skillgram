@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.4.2 — the usage record names the harness, not a constant
+
+`by_harness` shipped in 1.4.1 as "which agent used this", and two of the three paths that
+write it could not know: `skillgram use` recorded the literal `agent`, and the MCP
+`skillgram_touch` recorded the literal `mcp`. So "which skills was I using in the other
+harness" was answered by a bucket called `agent`.
+
+- `caller_identity()` resolves the harness the way `install` does (`SKILLGRAM_HARNESS` →
+  `--harness` → the process tree) and falls back to the caller's own default when nothing
+  knows. It never invents a name.
+- `use` records that identity (`--by` overrides it) and the MCP `skillgram_use` records it
+  too — the MCP server runs *inside* the harness, so the process tree names it there as
+  well. `skillgram_touch` now defaults to it instead of `mcp`.
+- Names are canonical (`normalize_harness`), so `claude` and `claude-code` land in one bucket.
+- 4 tests: the resolved identity, the `agent` fallback, `--by` winning, and the MCP path.
+
+120 stdlib tests.
+
 ## 1.4.1 — the loop is feedable, the CLI works, and the harness is not the identity
 
 Four defects found while reviewing the CLI surface (the code `main` runs exactly once, and whose

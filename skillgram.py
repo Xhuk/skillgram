@@ -77,7 +77,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto
@@ -2277,8 +2277,9 @@ MCP_TOOLS = [
      "description": "Ask whether the hub covers a capability. found=false means: do not invent, tell the user.",
      "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
     {"name": "skillgram_use",
-     "description": "Promote hub skills into the current project scope (idempotent).",
+     "description": "Promote hub skills into the current project scope (idempotent). Records the usage with the harness that called it.",
      "inputSchema": {"type": "object", "properties": {"skills": {"type": "array", "items": {"type": "string"}},
+                                                     "by": {"type": "string"},
                                                      "project": {"type": "string"}},
                      "required": ["skills"]}},
     {"name": "skillgram_status",
@@ -2291,7 +2292,7 @@ MCP_TOOLS = [
                                                      "project": {"type": "string"}},
                      "required": ["need"]}},
     {"name": "skillgram_touch",
-     "description": "Declare that you used these skills for the current task. This is the only usage signal skillgram can see.",
+     "description": "Declare that you used these skills for the current task. This is the only usage signal skillgram can see; `by` defaults to the harness that called it.",
      "inputSchema": {"type": "object", "properties": {"skills": {"type": "array", "items": {"type": "string"}},
                                                      "by": {"type": "string"},
                                                      "project": {"type": "string"}},
@@ -2313,7 +2314,14 @@ def mcp_call(hub: Hub, name: str, args: dict) -> dict:
         return missing(hub, str(args.get("query", "")))
     if name == "skillgram_use":
         proj = resolve_project(args.get("project"))
-        return promote(hub, [str(s) for s in args.get("skills", [])], Path(proj["path"]))
+        result = promote(hub, [str(s) for s in args.get("skills", [])], Path(proj["path"]))
+        # the MCP server runs inside the harness, so the process tree names it: the
+        # record says `claude`/`codex`/`reasonix`, not a constant
+        by = str(args.get("by") or caller_identity("mcp"))
+        result["uso"] = touch_usage(Path(proj["path"]),
+                                    [str(s) for s in args.get("skills", [])], by=by).get("touched", [])
+        result["by"] = by
+        return result
     if name == "skillgram_status":
         proj = resolve_project(args.get("project"))
         return {"hub": status(hub), "project": project_status(hub, Path(proj["path"]))}
@@ -2324,7 +2332,7 @@ def mcp_call(hub: Hub, name: str, args: dict) -> dict:
     if name == "skillgram_touch":
         proj = resolve_project(args.get("project"))
         return touch_usage(Path(proj["path"]), [str(s) for s in args.get("skills", [])],
-                           by=str(args.get("by") or "mcp"))
+                           by=str(args.get("by") or caller_identity("mcp")))
     if name == "skillgram_list":
         proj = resolve_project(args.get("project")) if args.get("project") else None
         return list_skills(hub, category=args.get("category"),
@@ -2856,6 +2864,18 @@ def resolve_harness(explicit: str | None = None) -> dict:
         out["note"] = (f"{HARNESS_ENV}={env} wins over --harness {flag}; unset {HARNESS_ENV} "
                        f"to install for another harness from here")
     return out
+
+
+def caller_identity(fallback: str = "agent") -> str:
+    """Who is asking, for the usage record: the harness, never a guess.
+
+    The harness is a mask, so the record has to say which mask was on: `use` and
+    `touch` call this instead of writing a constant. When nothing knows (no env, no
+    `--harness`, no harness in the process tree) it falls back to the caller's own
+    default rather than inventing a name.
+    """
+    name = resolve_harness()["name"]
+    return name if name and name != "unknown" else fallback
 
 
 def ledger_path() -> Path:
@@ -3896,6 +3916,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_use = sub.add_parser("use", parents=[common], help="promote hub skills into the project")
     p_use.add_argument("skills", nargs="+")
     p_use.add_argument("--project", help="project folder (default: engram-style resolution)")
+    p_use.add_argument("--by", help="who is using them (default: the harness that invoked skillgram)")
 
     p_unuse = sub.add_parser("unuse", parents=[common], help="drop skills from the project scope")
     p_unuse.add_argument("skills", nargs="+")
@@ -4155,7 +4176,11 @@ def dispatch(args, hub: Hub) -> dict | int:
     if cmd == "use":
         proj = resolve_project(args.project)
         result = promote(hub, args.skills, Path(proj["path"]))
-        result["uso"] = touch_usage(Path(proj["path"]), args.skills).get("touched", [])
+        # promoting a skill *is* using it: record who did it, so the next harness
+        # reads a name instead of "agent"
+        by = args.by or caller_identity()
+        result["uso"] = touch_usage(Path(proj["path"]), args.skills, by=by).get("touched", [])
+        result["by"] = by
         result["resolucion"] = proj["source"]
         return result
 
