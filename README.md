@@ -79,7 +79,7 @@ python skillgram.py install             # harness -> hub -> MCP (delegated) -> p
 
 ```bash
 pip install skillgram                  # the command, no clone
-skillgram --version                    # 1.5.0
+skillgram --version                    # whatever the index is serving
 ```
 
 Or from source, which is what you want if you are changing it:

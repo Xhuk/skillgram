@@ -1,6 +1,10 @@
 # Changelog
 
-## 1.6.0 — `align`: the harnesses, told apart
+## 1.6.0 (unreleased in PyPI) — `align`: the harnesses, told apart
+
+`main` carries it and CI is green; the index still serves 1.5.0 on purpose. It goes out
+together with `policy` (see [docs/POLICY.md](docs/POLICY.md)), so the release notes and
+the docs do not have to be rewritten twice.
 
 The tool could tell a project what it had, and could paint that set into every harness
 layout — but it could not answer the question a multi-harness developer actually asks:
