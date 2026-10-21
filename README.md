@@ -371,9 +371,11 @@ remain open by decision. When one closes, the line goes away.
    skillgram does not observe which skills an agent actually reads.
 4. **Lexical search only.** FTS5 has no embeddings, so cross-language synonyms miss (measured:
    `"cotizar credito hipotecario"` → one weak hit).
-5. **No permissions/profiles.** No agent/admin split: anyone with a shell can publish or
+5. **No permissions/roles.** No agent/admin split: anyone with a shell can publish or
    retire. `mcp --read-only` removes the write tools from a session, but it is a per-server
-   switch, not a role.
+   switch, not a role. A file-based policy (`docs/POLICY.md`, designed, not built) is the
+   intended answer: it gates what may be granted or exposed and fails CI. It is not
+   prevention, and the document says so.
 6. **No taste gate.** `lint` checks shape and is a hard gate in `propose`, but nothing judges
    whether a skill is *useful*: no eval, no grading, no dry run of the skill itself.
 7. **No scheduled review.** `review` is manual; put `review --fail-if-stale` in your cron/CI.
@@ -418,6 +420,7 @@ is cheap, respect is not.
 | how it operates, in three editorial plates | [docs/diagrams/operativity.html](docs/diagrams/operativity.html) |
 | the rules this repo holds itself to | [AGENTS.md](AGENTS.md) |
 | what a skill must contain | [docs/SKILL-CONTRACT.md](docs/SKILL-CONTRACT.md) |
+| the design of `align` and `policy` (not implemented) | [docs/POLICY.md](docs/POLICY.md) |
 | how to report something | [skills/skillgram-report](skills/skillgram-report/SKILL.md) |
 
 ## Tests
