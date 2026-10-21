@@ -201,16 +201,38 @@ plus two lines in the pipeline (`skillgram policy check --fail`) and the block t
 `mount` already injects into `AGENTS.md`, which is what makes a new session, in any
 harness, read the same rules without being told.
 
-## 9. Open decisions (the ones worth arguing)
+## 9. Decisions (signed 2026-10-21)
 
-1. **Where does the organizational policy live** — a path, a git remote, or an HTTPS
-   URL? The hash makes all three auditable; HTTPS needs no credentials but no private
-   policy either.
-2. **Default `mode` for a company** — `open` + `deny` (adoptable, stops the known bad)
-   or `closed` + `allow` (strict, high friction). My recommendation: start `open`.
-3. **Is `require` part of v1?** It is the half of governance teams ask for first
-   ("everyone with the QA gate"), and it is cheaper than `allow`.
-4. **Per-harness in v1?** I would reserve the key and ignore it until asked.
+The four open questions, decided. They are defaults, not law: each one is reversible
+by editing this file before the code exists, and cheap to change after.
+
+1. **`require` is in v1.** It is the half teams ask for first ("everyone with the
+   contract gate"), it is cheaper than an allow-list, and it makes `policy check`
+   useful on day one without a `deny` list. A seed can also be expressed as `require`
+   at the organization level, which keeps one concept instead of two.
+2. **Default `mode` is `open` at every level.** A company that wants an allow-list
+   writes `"mode": "closed"` explicitly; nobody gets a closed hub by surprise. Because
+   the merge is monotonic (§5.1), `open` at the project level cannot lift an
+   organization `deny`.
+3. **Organization policy travels by git ref** — `--policy git@host:team/skills-policy.git#main`
+   is the primary transport, `--policy <path>` exists for tests and for the "policy in
+   the same repo" case (which is reviewable, not enforceable against its own author). The
+   report records `source.from` and the content hash, so an audit can say which revision
+   was in force. HTTPS without credentials cannot serve a private policy, so it is not
+   offered.
+4. **Per-harness rules are reserved, not interpreted, in v1.** The schema accepts and
+   validates `harnesses` so no file has to migrate later, but nothing reads it yet.
+   There is no evidence of demand, and interpreting it would double the enforcement
+   surface for a case nobody has asked for.
+
+Two consequences worth writing down, because they are easy to forget later:
+
+- **`align` ships first and needs no trust**, so it can be validated on real repos
+  immediately. `policy` ships read-only before it denies anything.
+- **The organization `deny` is the only rule that must survive a hostile developer**;
+  everything else is cooperation. That is why it may only be relaxed by a level above
+  it, and why the CI gate — not the CLI — is the enforcement.
+
 
 ## 10. What would tell us this is worth building
 
