@@ -11,7 +11,6 @@ import tempfile
 import time
 from pathlib import Path
 
-from .adopt import skill_meta, write_skill_meta
 from .govern import read_seeds
 from .hub import (
     DEFAULT_CATEGORY,
@@ -21,6 +20,8 @@ from .hub import (
     home_dir,
     re_findall_words,
     skill_hash,
+    skill_meta,
+    write_skill_meta,
 )
 
 

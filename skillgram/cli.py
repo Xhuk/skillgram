@@ -149,6 +149,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_install.add_argument("--bootstrap", dest="bootstrap_repos", action="store_true",
                            help="repos without a scope: pick a set with the connected LLM (default: skip and report)")
     p_install.add_argument("--depth", type=int, default=2, help="how deep to look for repos under --root (default 2)")
+    p_install.add_argument("--no-bundled", dest="no_bundled", action="store_true",
+                           help="do not seed the hub with the skills that ship with the tool")
     p_prop = sub.add_parser("propagate", parents=[common],
                             help="mount + protocol + ledger for every repo of a harness under a root")
     p_prop.add_argument("--harness", help="harness identity (default: SKILLGRAM_HARNESS, then the process tree)")
@@ -483,7 +485,8 @@ def dispatch(args, hub: Hub) -> dict | int:
 
     if cmd == "install":
         return install(hub, harness=args.harness, root=args.root, apply=not args.dry_run,
-                       bootstrap_repos=args.bootstrap_repos, depth=args.depth)
+                       bootstrap_repos=args.bootstrap_repos, depth=args.depth,
+                       bundled=not args.no_bundled)
 
     if cmd == "propagate":
         return propagate(hub, harness=args.harness, root=args.root, apply=args.apply,

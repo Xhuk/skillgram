@@ -73,7 +73,9 @@ Every skill that `new` or `propose` creates carries a sidecar next to `SKILL.md`
 }
 ```
 
-`source.kind` is `authored` today and `git`/`url` once `add` lands (with `url`, `ref` and `path`).
+`source.kind` is `authored` for something a human wrote, `bundled` for a copy seeded from the
+skills that ship inside the package (with the `version` it came from), and `git`/`url` once
+`add` lands (with `url`, `ref` and `path`).
 The hash is what makes `update` possible later: compare, show the diff, then decide. A skill with
 no sidecar is not rejected — the hub has 843 of those — but it cannot be updated, only replaced.
 

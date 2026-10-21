@@ -10,7 +10,17 @@ import time
 from pathlib import Path
 
 from .drift import make_links
-from .hub import DEFAULT_CATEGORY, Hub, _skill_summary, home_dir, is_link, skill_hash
+from .hub import (
+    AGENTS_DIR,
+    DEFAULT_CATEGORY,
+    Hub,
+    _skill_summary,
+    home_dir,
+    is_link,
+    skill_hash,
+    skill_meta,
+    write_skill_meta,
+)
 from .llm import LLM_SYSTEM, llm_chat, llm_config
 
 
@@ -237,12 +247,6 @@ def onboard(hub: Hub, scope: str = "all", harness: str | None = None, use_llm: b
     return plan
 
 
-SKILL_META = "SKILLMETA.json"
-
-
-AGENTS_DIR = "agents"
-
-
 FLAVOR_HINTS = {
     "claude": ("claude code", "claude-code", "`claude", "claude -p", ".claude/"),
     "codex": ("codex cli", "`codex", "codex exec", ".codex/"),
@@ -256,23 +260,6 @@ FLAVOR_HINTS = {
 
 
 GENERIC_FLAVOR = "generic"
-
-
-def skill_meta(skill_dir: Path) -> dict:
-    path = skill_dir / SKILL_META
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        return {}
-
-
-def write_skill_meta(skill_dir: Path, meta: dict) -> None:
-    path = skill_dir / SKILL_META
-    try:
-        path.write_text(json.dumps(meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    except OSError:
-        pass
 
 
 def detect_flavor(skill_dir: Path) -> dict:

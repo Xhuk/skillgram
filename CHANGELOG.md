@@ -1,6 +1,28 @@
 # Changelog
 
-## 1.9.0 (unreleased in PyPI) — the file became a package, and the gates exist
+## 1.9.0 (unreleased in PyPI) — the file became a package, the gates exist, and it ships skills
+
+Two skills travel inside the package now, and `install` seeds them into the hub:
+[`skillgram-report`](skillgram/skills/skillgram-report/SKILL.md) and
+[`anti-slop-guardrails`](skillgram/skills/anti-slop-guardrails/SKILL.md) — a review checklist, a
+behaviour-preserving refactor protocol, and the gates-plus-baseline habit that keeps a cleanup
+from washing away. The second one is this repo's own refactor, generalised.
+
+- **A fresh machine is no longer an empty hub.** `install` used to block on one; it now copies
+  the shipped base into `<hub>/<category>/` and records it as seeds (`always`). Idempotent and
+  never overwriting: an edited copy stays edited and reports `present`. `install --no-bundled`
+  keeps the old behaviour, blocked message included.
+- **`skill_hash` means content, not bookkeeping.** It now ignores `SKILLMETA.json` (which carries
+  a copy of the hash, so counting it made the value false the moment it was written) and
+  normalises line endings (the same skill checked out on Windows and on Linux used to hash
+  differently, which would call a whole library stale on the other machine). Manifests written
+  before this report `stale` once; re-run `use`/`mount`.
+- `SKILLMETA.json` gains `source.kind = bundled` with the version it came from.
+- The provenance helpers (`SKILL_META`, `skill_meta`, `write_skill_meta`) moved to `hub.py`:
+  only the base layer can write them without an import cycle.
+- 185 tests (`TestBundledSkills`), `ruff` and `mypy` clean.
+
+
 
 The score that was lowest was "maintainability: 5294 lines in one file, zero static
 analysis". Both are gone.

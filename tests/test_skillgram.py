@@ -988,7 +988,17 @@ class TestInstall(InstallCase):
         res = skillgram.install(skillgram.Hub(hub_root), harness="codex", apply=True, runner=FakeCli())
         self.assertTrue(hub_root.is_dir())
         self.assertIn("created", " ".join(res["done"]))
-        self.assertFalse(res["ok"])  # empty hub: it says so instead of pretending
+        # a fresh hub is not empty any more: the shipped base skills land in it
+        self.assertTrue(res["ok"], res["blocked"])
+        self.assertTrue((hub_root / "dev-practices" / "anti-slop-guardrails" / "SKILL.md").is_file())
+        self.assertIn("anti-slop-guardrails", res["bundled"]["created"])
+
+    def test_without_the_bundled_base_an_empty_hub_still_says_so(self):
+        hub_root = self.tmp / "fresh-hub"
+        res = skillgram.install(skillgram.Hub(hub_root), harness="codex", apply=True,
+                                runner=FakeCli(), bundled=False)
+        self.assertFalse(res["ok"])  # it says so instead of pretending
+        self.assertTrue(any("hub is empty" in item for item in res["blocked"]))
 
     def test_dry_run_writes_nothing(self):
         hub_root = self.tmp / "fresh-hub"
@@ -2042,6 +2052,22 @@ class TestRealHarnessCli(HomeCase):
                 self.assertNotIn(bad, out.lower(), f"{client}: {out[:200]}")
 
 
+    def test_the_hash_ignores_line_endings_and_provenance(self):
+        """The same skill on Windows (CRLF) and Linux (LF) is the same skill: a hash that
+        disagrees would call a whole library stale on the other machine."""
+        skill = self.hub_root / "infra-ops" / "cocido"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_bytes(b"---\nname: cocido\n---\nbody\n")
+        lf = skillgram.skill_hash(skill)
+        (skill / "SKILL.md").write_bytes(b"---\r\nname: cocido\r\n---\r\nbody\r\n")
+        self.assertEqual(skillgram.skill_hash(skill), lf)
+        skillgram.write_skill_meta(skill, {"by": "test", "hash": lf})
+        self.assertEqual(skillgram.skill_hash(skill), lf)
+        # a real edit still moves it
+        (skill / "SKILL.md").write_bytes(b"---\nname: cocido\n---\nother body\n")
+        self.assertNotEqual(skillgram.skill_hash(skill), lf)
+
+
 class TestWatch(HomeCase):
     """`watch` is the only surface that works without being asked, and it had no test:
     a polling thread that re-syncs when the hub changes.
@@ -2115,6 +2141,71 @@ class TestLintBaseline(HomeCase):
                                              "--hub", str(self.hub_root)]), 0)
             self.assertEqual(skillgram.main(["lint", "--json", "--baseline", str(baseline),
                                              "--hub", str(self.hub_root)]), 0)
+
+
+class TestBundledSkills(HomeCase):
+    """The tool ships skills of its own, and a fresh machine gets them.
+
+    Two things are at stake: a stranger's first `install` must not land on an empty hub,
+    and the shipped skills must pass the same gate as everything else in the hub.
+    """
+
+    def test_both_base_skills_ship_inside_the_package(self):
+        bundled = skillgram.bundled_skills()
+        self.assertEqual(sorted(bundled), ["anti-slop-guardrails", "skillgram-report"])
+        self.assertEqual(bundled["anti-slop-guardrails"], "dev-practices")
+        root = skillgram.bundled_root()
+        self.assertEqual(root.parent.name, "skillgram", "the base must travel in the wheel")
+
+    def test_the_shipped_skills_pass_the_gate_they_describe(self):
+        # `--contract --strict`, on the skills we hand to a stranger
+        for name, category in skillgram.bundled_skills().items():
+            make_dir = self.hub_root / category / name
+            shutil.copytree(skillgram.bundled_root() / name, make_dir)
+        res = skillgram.lint_hub(skillgram.Hub(self.hub_root), strict=True, contract=True)
+        self.assertTrue(res["ok"], res["errors"])
+
+    def test_seeding_twice_never_overwrites_an_edited_copy(self):
+        hub = skillgram.Hub(self.hub_root)
+        first = skillgram.seed_hub(hub)
+        self.assertEqual(sorted(first["created"]), ["anti-slop-guardrails", "skillgram-report"])
+
+        edited = self.hub_root / "dev-practices" / "anti-slop-guardrails" / "SKILL.md"
+        edited.write_text(edited.read_text(encoding="utf-8") + "\nmine\n", encoding="utf-8")
+
+        second = skillgram.seed_hub(hub)
+        self.assertEqual(second["created"], [])
+        self.assertTrue(all(row["state"] == "present" for row in second["rows"]))
+        self.assertIn("mine", edited.read_text(encoding="utf-8"))
+
+    def test_the_sidecar_says_it_is_bundled_and_from_which_version(self):
+        hub = skillgram.Hub(self.hub_root)
+        skillgram.seed_hub(hub)
+        skill_dir = self.hub_root / "meta-skills" / "skillgram-report"
+        meta = skillgram.skill_meta(skill_dir)
+        self.assertEqual(meta["source"]["kind"], "bundled")
+        self.assertEqual(meta["source"]["version"], skillgram.VERSION)
+        # provenance is not content: the recorded hash is the content one, and rewriting
+        # the sidecar (a `port`, an `adopt`) must not make the skill look changed
+        before = skillgram.skill_hash(skill_dir)
+        self.assertEqual(meta["hash"], before)
+        skillgram.write_skill_meta(skill_dir, dict(meta, flavor="claude-code"))
+        self.assertEqual(skillgram.skill_hash(skill_dir), before)
+
+    def test_a_dry_run_reports_without_writing(self):
+        res = skillgram.seed_hub(skillgram.Hub(self.hub_root), apply=False)
+        self.assertTrue(all(row["state"] == "would" for row in res["rows"]))
+        self.assertFalse((self.hub_root / "dev-practices").exists())
+
+    def test_the_cli_flag_turns_it_off(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            skillgram.main(["install", "--json", "--harness", "codex", "--dry-run",
+                            "--hub", str(self.tmp / "h"), "--no-bundled"])
+        # the dry run is not the point here: the flag must parse and be honoured
+        args = skillgram.build_parser().parse_args(
+            ["install", "--hub", str(self.tmp / "h"), "--no-bundled"])
+        self.assertTrue(args.no_bundled)
 
 
 class TestPackageShape(HomeCase):

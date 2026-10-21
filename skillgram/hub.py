@@ -159,6 +159,26 @@ def link_target(path: Path) -> Path | None:
     return target
 
 
+SKILL_META = "SKILLMETA.json"
+
+AGENTS_DIR = "agents"
+
+def skill_meta(skill_dir: Path) -> dict:
+    path = skill_dir / SKILL_META
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+def write_skill_meta(skill_dir: Path, meta: dict) -> None:
+    path = skill_dir / SKILL_META
+    try:
+        path.write_text(json.dumps(meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
 PROJECT_DIR = ".agents"
 
 
@@ -177,14 +197,26 @@ def _project_name(path: Path) -> str:
 
 
 def skill_hash(skill_dir: Path) -> str:
-    """Hash del contenido de la skill (para detectar drift hub vs proyecto)."""
+    """The content hash of a skill: what it says, not where it came from.
+
+    Two exclusions, both learned the hard way:
+
+    - `SKILLMETA.json` carries a copy of this very hash, so counting it would make the
+      value false the moment it is written; a provenance-only update (a `port`, an
+      `adopt`) would also read as a content change in every manifest that compares hashes.
+    - Line endings are normalised. The same skill checked out on Windows (CRLF) and on
+      Linux (LF) is the same skill, and a hash that disagrees would report a whole shipped
+      library as stale on the other machine.
+    """
     h = hashlib.sha256()
     for f in sorted(skill_dir.rglob("*")):
         if not f.is_file() or "__pycache__" in f.parts:
             continue
+        if f.name == SKILL_META and f.parent == skill_dir:
+            continue
         h.update(f.relative_to(skill_dir).as_posix().encode("utf-8", "replace"))
         try:
-            h.update(f.read_bytes())
+            h.update(f.read_bytes().replace(b"\r\n", b"\n"))
         except OSError:
             pass
     return h.hexdigest()[:16]

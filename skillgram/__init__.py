@@ -7,11 +7,9 @@ six-line shim so `python skillgram.py <command>` keeps working from a checkout.
 from __future__ import annotations
 
 from .adopt import (  # noqa: F401
-    AGENTS_DIR,
     FLAVOR_HINTS,
     GENERIC_FLAVOR,
     PORT_SYSTEM,
-    SKILL_META,
     _heuristic_category,
     _hub_already_listed,
     _prepend_toml_paths,
@@ -31,8 +29,11 @@ from .adopt import (  # noqa: F401
     port_missing,
     port_skill,
     replace_native_with_link,
-    skill_meta,
-    write_skill_meta,
+)
+from .bundled import (  # noqa: F401
+    bundled_root,
+    bundled_skills,
+    seed_hub,
 )
 from .cli import (  # noqa: F401
     _mount_bootstrap,
@@ -117,6 +118,7 @@ from .harnesses import (  # noqa: F401
     write_ledger,
 )
 from .hub import (  # noqa: F401
+    AGENTS_DIR,
     DEFAULT_CATEGORY,
     DEFAULT_EXCLUDE,
     HARNESS_ALIASES,
@@ -126,6 +128,7 @@ from .hub import (  # noqa: F401
     PROJECT_CONFIG,
     PROJECT_DIR,
     PROJECT_MANIFEST,
+    SKILL_META,
     VERSION,
     Hub,
     _first_lines,
@@ -150,6 +153,8 @@ from .hub import (  # noqa: F401
     run_cli,
     shell_cmd,
     skill_hash,
+    skill_meta,
+    write_skill_meta,
 )
 from .lifecycle import (  # noqa: F401
     CONTRACT_SECTIONS,

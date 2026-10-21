@@ -10,6 +10,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from .bundled import seed_hub
+from .govern import seed_skills
 from .hub import (
     PROJECT_CONFIG,
     VERSION,
@@ -582,7 +584,8 @@ def _summarize_skips(rows: list) -> list:
 
 
 def install(hub: Hub, harness: str | None = None, root: str | None = None, apply: bool = True,
-            runner=None, bootstrap_repos: bool = False, depth: int = 2) -> dict:
+            runner=None, bootstrap_repos: bool = False, depth: int = 2,
+            bundled: bool = True) -> dict:
     """One idempotent command: harness -> hub -> MCP (delegated) -> propagate."""
     resolved = resolve_harness(harness)
     name = resolved["name"]
@@ -593,12 +596,20 @@ def install(hub: Hub, harness: str | None = None, root: str | None = None, apply
     hub_created = not hub.root.is_dir()
     if hub_created and apply:
         hub.root.mkdir(parents=True, exist_ok=True)
+    seeded = seed_hub(hub, apply=apply) if bundled else {"rows": [], "created": []}
+    for row in seeded["rows"]:
+        line = f"base skill {row['skill']} -> {row['path']} ({row['state']})"
+        (done if row["state"] in {"created", "would"} else already).append(line)
     known = hub.skills()
     if hub_created:
         done.append(f"hub {'created' if apply else 'would be created'}: {hub.root}")
     else:
         already.append(f"hub in place: {hub.root} ({len(known)} skills)")
-    if not known:
+    if seeded["created"] and apply:
+        seed_skills(hub, seeded["created"], "always")
+        done.append("base skills marked as seeds (always): " + ", ".join(seeded["created"]))
+    # a dry run that would seed the base is not an empty hub: saying both would be a lie
+    if not known and not any(row["state"] in {"created", "would"} for row in seeded["rows"]):
         blocked.append(f"hub is empty: add <category>/<skill>/SKILL.md or run `skillgram onboard` ({hub.root})")
         failed = True
 
@@ -661,6 +672,7 @@ def install(hub: Hub, harness: str | None = None, root: str | None = None, apply
         "harness": resolved,
         "hub": {"path": str(hub.root), "skills": len(known), "created": hub_created},
         "mcp": mcp,
+        "bundled": seeded,
         "propagate": prop,
         "done": done,
         "already": already,

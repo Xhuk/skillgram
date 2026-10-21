@@ -37,6 +37,8 @@ Keep it that way unless there is a hard reason not to.
       adopt.py            inventory, onboard plan/apply, adoption, flavor, precedence
       serve.py            MCP stdio server, watcher, daemon, autostart
       cli.py              parser, dispatch, renderers, main
+    skillgram/skills/     the two skills that ship WITH the tool (see below); package data,
+                          so `install` can seed a fresh hub with no network
     skillgram.py          six-line shim so `python skillgram.py <cmd>` works from a
                           checkout; not shipped in the wheel
     tests/test_*.py       stdlib unittest
@@ -45,6 +47,20 @@ Keep it that way unless there is a hard reason not to.
 The dependency direction is a DAG with `hub` at the bottom and `cli` at the top: a module
 imports only from the layers below it. `sync` and `onboard` are exported *functions*, so
 their modules are called `drift` and `adopt` — otherwise `__init__` would shadow them.
+
+### The bundled base
+
+`skillgram/skills/<name>/SKILL.md` are the skills that travel inside the wheel:
+`skillgram-report` (how to report a bug) and `anti-slop-guardrails` (how to de-slop a codebase so
+it stays de-slopped). `install` seeds them into `<hub>/<category>/<name>/` and records them as
+seeds (`always`) — a fresh machine used to land on an empty hub, which is a bad first minute.
+Seeding never overwrites: a hub that already has the skill keeps the edited copy, and the row says
+`present`. `install --no-bundled` opts out. The sidecar records `source.kind = bundled` plus the
+version, so a shipped copy is distinguishable from an adopted one.
+
+Adding one: put it in `skillgram/skills/<name>/`, add it to `BUNDLED` in `bundled.py` with its hub
+category, and it must pass `lint --contract --strict` — a test enforces that
+(`TestBundledSkills.test_the_shipped_skills_pass_the_gate_they_describe`).
 
 `HOME` is read through `hub.home_dir()` and never captured at import time: there is one
 patch point (`skillgram.hub.HOME`) and every module follows it. A module that keeps its

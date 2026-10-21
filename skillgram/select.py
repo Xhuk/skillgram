@@ -9,9 +9,9 @@ import shutil
 import time
 from pathlib import Path
 
-from .adopt import GENERIC_FLAVOR, _heuristic_category, write_skill_meta
+from .adopt import GENERIC_FLAVOR, _heuristic_category
 from .govern import read_seeds
-from .hub import Hub, _read_manifest, _write_manifest, re_findall_words, skill_hash
+from .hub import Hub, _read_manifest, _write_manifest, re_findall_words, skill_hash, write_skill_meta
 from .lifecycle import lint_skill, record_demand
 from .llm import llm_chat, llm_log
 from .scope import project_scope, promote
