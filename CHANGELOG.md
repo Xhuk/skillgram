@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.4.3 — two defects a real repo found in the first ten minutes
+
+Both showed up mounting a real monorepo (vetgroom-demo: Go backend, Vite/React
+frontend, Supabase, Dokploy, Katra auth).
+
+- **`mount` polluted `git status`, and git would have committed the links.** The
+  links it writes inside the project are directories to git, so a `git add -A` turns
+  every mounted skill into a real copy in the repo — the one thing skillgram promises
+  never to do. `mount` now keeps a delimited block in `.gitignore` with the dirs it
+  writes (one per harness plus the project scope), idempotent and reversible, and the
+  scope itself (`.agents/config.json`, `.agents/skills.json`) stays tracked because it
+  is the memory the next harness reads.
+- **`bootstrap` ranked noise.** It read only the root `package.json` and turned every
+  dependency into a tag, so on vetgroom-demo (whose root `package.json` carries a
+  flattened lockfile) the top signals were `ansi-regex`, `bare-fs`, `ieee754` and the
+  real stack was invisible. Signals now come from the root *and its immediate
+  subdirectories* (`backend/go.mod`, `frontend/package.json`) and only dependencies
+  that name a known framework become tags; scoped packages count by scope
+  (`@stripe/x` → `stripe`). Two-character tags (`go`, `ts`) are no longer dropped.
+- 5 tests: a monorepo reports its real stack, a lockfile in dependencies does not
+  become a stack, short tags survive, and the ignore block is written once, keeps the
+  existing rules and never hides the scope.
+
+125 stdlib tests.
+
 ## 1.4.2 — the usage record names the harness, not a constant
 
 `by_harness` shipped in 1.4.1 as "which agent used this", and two of the three paths that

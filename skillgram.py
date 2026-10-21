@@ -77,7 +77,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "1.4.2"
+VERSION = "1.4.3"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto
@@ -1677,6 +1677,10 @@ def mount_project(hub: Hub, project: Path, apply: bool = False, prune_global: bo
     pruned = {"harness": None, "removed": []}
     if prune_global:
         pruned = prune_global_links(hub, apply=apply)
+    # a repo whose git sees the links would commit the skills themselves. The project
+    # scope always holds links (promote wrote them), harnesses add their own dirs.
+    ignore_dirs = [str(project_dir(project) / PROJECT_SKILLS), *[r["dir"] for r in rows]]
+    ignores = sync_gitignore(project, ignore_dirs, apply=apply)
     return {
         "ok": True,
         "op": "mount",
@@ -1685,6 +1689,7 @@ def mount_project(hub: Hub, project: Path, apply: bool = False, prune_global: bo
         "skills": len(wanted),
         "applied": apply,
         "harnesses": rows,
+        "gitignore": ignores,
         "global": pruned,
     }
 
@@ -1736,6 +1741,44 @@ SIGNAL_FILES = {
     "prisma": "prisma/schema.prisma",
 }
 
+# A repo keeps its stack in manifests, and only these say which stack it is: turning
+# every dependency into a tag ranked noise first (vetgroom-demo's root package.json
+# lists 89, most of them transitive: ansi-regex, bare-fs, ieee754...). The raw deps
+# are still reported, but they only become tags when they name a known framework.
+DEP_TAGS = {
+    "next": "next", "react": "react", "react-dom": "react", "vue": "vue", "nuxt": "nuxt",
+    "svelte": "svelte", "@angular/core": "angular", "express": "express", "fastify": "fastify",
+    "@nestjs/core": "nestjs", "vite": "vite", "tailwindcss": "tailwind", "prisma": "prisma",
+    "@prisma/client": "prisma", "drizzle-orm": "drizzle", "@supabase/supabase-js": "supabase",
+    "supabase": "supabase", "typescript": "ts", "playwright": "playwright",
+    "@playwright/test": "playwright", "jest": "jest", "vitest": "vitest", "stripe": "stripe",
+    "electron": "electron", "expo": "expo", "react-native": "react-native",
+    "dockerode": "docker", "mongoose": "mongodb", "pg": "postgres", "mysql2": "mysql",
+    "@tanstack/react-query": "react", "zustand": "react",
+}
+
+EXTRA_SIGNALS = {
+    "requirements.txt": "python",
+    "Pipfile": "python",
+    "next.config.mjs": "next",
+    "next.config.ts": "next",
+    "vite.config.ts": "vite",
+    "vite.config.js": "vite",
+    "angular.json": "angular",
+    "supabase": "supabase",
+    "railway.json": "railway",
+    "vercel.json": "vercel",
+    "fly.toml": "fly",
+    "Chart.yaml": "helm",
+}
+
+# The stack usually lives one level down in a monorepo (backend/go.mod,
+# frontend/package.json). node_modules and friends are never scanned.
+MANIFEST_SKIP = {
+    "node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build",
+    "target", "vendor", ".next", ".turbo", "coverage", "bin", "obj",
+}
+
 BOOTSTRAP_SYSTEM = (
     "You pick which skills from a catalog a repository actually needs. You receive the "
     "repo signals and the candidate skills (name, category, score, short summary). "
@@ -1763,32 +1806,79 @@ def llm_log(action: str, detail: dict, model: str = "") -> None:
         pass
 
 
+def _scan_dirs(project: Path, depth: int = 1) -> list:
+    """The repo root plus its immediate subdirectories (a monorepo keeps the stack
+    one level down). Build output and dependency trees are never entered."""
+    out = [project]
+    if depth <= 0:
+        return out
+    try:
+        children = sorted(project.iterdir())
+    except OSError:
+        return out
+    for entry in children:
+        if not entry.is_dir() or entry.name.lower() in MANIFEST_SKIP:
+            continue
+        if entry.name.startswith(".") and entry.name != ".github":
+            continue
+        out.append(entry)
+    return out
+
+
 def repo_signals(project: Path) -> dict:
-    """Senales deterministas del repo (sin LLM)."""
-    files = []
-    for tag, rel in SIGNAL_FILES.items():
-        if (project / rel).exists():
-            files.append(tag)
-    for alt in ("compose.yml", "compose.yaml", "docker-compose.yaml"):
-        if (project / alt).exists() and "compose" not in files:
-            files.append("compose")
+    """Senales deterministas del repo (sin LLM).
+
+    Los manifiestos del root y de sus subdirectorios, y solo los tags que nombran un
+    stack conocido: `bootstrap` decide con esto, asi que un package.json con el
+    lockfile volcado adentro no puede convertirse en 89 tags de dependencias
+    transitivas (paso con vetgroom-demo: ansi-regex, bare-fs, ieee754...).
+    """
+    files: list = []
+    tags: set = set()
+    deps: list = []
+    folders = _scan_dirs(project)
+    for folder in folders:
+        for tag, rel in SIGNAL_FILES.items():
+            if (folder / rel).exists() and tag not in files:
+                files.append(tag)
+                tags.add(tag)
+        for rel, tag in EXTRA_SIGNALS.items():
+            if (folder / rel).exists() and tag not in files:
+                files.append(tag)
+                tags.add(tag)
+        for alt in ("compose.yml", "compose.yaml", "docker-compose.yaml"):
+            if (folder / alt).exists() and "compose" not in files:
+                files.append("compose")
+                tags.add("compose")
+        pkg = folder / "package.json"
+        if pkg.is_file():
+            try:
+                data = json.loads(pkg.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            names = list(data.get("dependencies", {}) or {}) + list(data.get("devDependencies", {}) or {})
+            deps.extend(n for n in names if n not in deps)
+            for name in names:
+                # exact name first, then the scope: @stripe/stripe-js and @stripe/x
+                # are the same stack signal
+                tag = DEP_TAGS.get(name) or (
+                    DEP_TAGS.get(name.split("/")[0].lstrip("@")) if "/" in name else None
+                )
+                if tag:
+                    tags.add(tag)
     if (project / ".github" / "workflows").is_dir():
         files.append("ci")
+        tags.add("ci")
     if (project / ".env.example").exists() or (project / ".env.sample").exists():
         files.append("env")
-    deps = []
-    pkg = project / "package.json"
-    if pkg.is_file():
-        try:
-            data = json.loads(pkg.read_text(encoding="utf-8"))
-            deps = sorted(set(list(data.get("dependencies", {}) or {}) +
-                               list(data.get("devDependencies", {}) or {})))[:40]
-        except (OSError, ValueError):
-            pass
-    tags = set(files)
-    for dep in deps:
-        tags.add(dep.split("/")[0].lstrip("@").lower())
-    return {"files": sorted(set(files)), "deps": deps, "tags": sorted(t for t in tags if len(t) > 2)}
+        tags.add("env")
+    return {
+        "files": sorted(set(files)),
+        "deps": sorted(set(deps))[:40],
+        # no length filter: "go" and "ts" are two of the most useful tags there are
+        "tags": sorted(tags),
+        "scanned": [f.name or str(f) for f in folders],
+    }
 
 
 def rank_skills(hub: Hub, tokens: list, limit: int | None = None) -> list:
@@ -2633,6 +2723,56 @@ def new_skill(hub: Hub, name: str, category: str | None = None, author: str = "h
 
 PROTOCOL_BEGIN = "<!-- skillgram:protocol:begin -->"
 PROTOCOL_END = "<!-- skillgram:protocol:end -->"
+
+# `mount` writes links inside the repo. Git does not know what a junction is: it
+# sees a directory and would commit the skill's files -- the one thing skillgram
+# promises never to do (no copies). The scope itself stays tracked, because that is
+# the memory the next harness reads (`.agents/config.json`, `.agents/skills.json`).
+GITIGNORE_BEGIN = "# skillgram:links:begin (written by `skillgram mount`; do not commit links)"
+GITIGNORE_END = "# skillgram:links:end"
+
+
+def link_ignores(dirs: list, project: Path) -> list:
+    """The mounted dirs as git paths, relative to the project and slash-terminated."""
+    out = []
+    for raw in dirs:
+        try:
+            rel = Path(raw).resolve().relative_to(Path(project).resolve()).as_posix()
+        except (OSError, ValueError):
+            continue
+        if rel and rel != "." and f"{rel}/" not in out:
+            out.append(f"{rel}/")
+    return sorted(out)
+
+
+def sync_gitignore(project: Path, dirs: list, apply: bool = False) -> dict:
+    """Keep `git status` clean after a mount. Idempotent, delimited, reversible."""
+    paths = link_ignores(dirs, project)
+    out = {"ok": True, "op": "gitignore", "file": str(project / ".gitignore"), "paths": paths,
+           "applied": apply, "changed": False}
+    if not paths:
+        return out
+    path = project / ".gitignore"
+    try:
+        text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    except OSError as exc:
+        out.update({"ok": False, "error": str(exc)})
+        return out
+    block = "\n".join([GITIGNORE_BEGIN, *paths, GITIGNORE_END])
+    if GITIGNORE_BEGIN in text and GITIGNORE_END in text:
+        start = text.index(GITIGNORE_BEGIN)
+        end = text.index(GITIGNORE_END) + len(GITIGNORE_END)
+        new = text[:start] + block + text[end:]
+    else:
+        sep = "" if not text or text.endswith("\n") else "\n"
+        new = text + sep + ("\n" if text else "") + block + "\n"
+    out["changed"] = new != text
+    if apply and out["changed"]:
+        try:
+            path.write_text(new, encoding="utf-8")
+        except OSError as exc:
+            out.update({"ok": False, "error": str(exc)})
+    return out
 
 
 def protocol_block(hub: Hub) -> str:

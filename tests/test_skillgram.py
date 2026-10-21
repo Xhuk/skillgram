@@ -1311,6 +1311,93 @@ class TestUsageAcrossHarnesses(HomeCase):
         self.assertEqual(row["by_harness"], {"claude": 1})
 
 
+class TestRepoSig(HomeCase):
+    """`bootstrap` decides with these signals. It used to read only the root
+    package.json and turn every dependency into a tag: on vetgroom-demo (a monorepo
+    whose root package.json carries a flattened lockfile) the top signals were
+    `ansi-regex`, `bare-fs`, `ieee754` and the real stack was invisible.
+    """
+
+    def test_a_monorepo_reports_its_real_stack(self):
+        repo = self.tmp / "mono"
+        (repo / "backend").mkdir(parents=True)
+        (repo / "frontend").mkdir()
+        (repo / "node_modules" / "junk").mkdir(parents=True)
+        (repo / "backend" / "go.mod").write_text("module x\n", encoding="utf-8")
+        (repo / "frontend" / "package.json").write_text(json.dumps({
+            "dependencies": {"react": "^18", "vite": "^5", "@supabase/supabase-js": "^2"},
+            "devDependencies": {"playwright": "^1"},
+        }), encoding="utf-8")
+        (repo / "package.json").write_text(json.dumps({
+            "dependencies": {"ansi-regex": "1", "bare-fs": "1", "ieee754": "1"},
+        }), encoding="utf-8")
+        (repo / "node_modules" / "junk" / "package.json").write_text("{}", encoding="utf-8")
+
+        signals = skillgram.repo_signals(repo)
+        for expected in ("go", "node", "react", "vite", "supabase", "playwright"):
+            self.assertIn(expected, signals["tags"])
+        # a lockfile dumped into dependencies is not a stack
+        for junk in ("ansi-regex", "bare-fs", "ieee754"):
+            self.assertNotIn(junk, signals["tags"])
+        self.assertNotIn("node_modules", signals["scanned"])
+
+    def test_short_tags_are_kept(self):
+        repo = self.tmp / "short"
+        repo.mkdir()
+        (repo / "go.mod").write_text("module x\n", encoding="utf-8")
+        (repo / "tsconfig.json").write_text("{}", encoding="utf-8")
+        signals = skillgram.repo_signals(repo)
+        self.assertIn("go", signals["tags"])
+        self.assertIn("ts", signals["tags"])
+
+
+class TestMountGitignore(HomeCase):
+    """`mount` puts links inside the repo. Git sees a junction as a directory and
+    would commit the skill's files -- the copies skillgram promises never to make.
+    """
+
+    def project(self) -> Path:
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        proj = self.tmp / "proj"
+        skillgram.init_project("proj", str(proj))
+        skillgram.promote(skillgram.Hub(self.hub_root), ["deploy"], proj)
+        return proj
+
+    def test_the_links_are_ignored_and_the_scope_is_not(self):
+        proj = self.project()
+        # a harness home so mount also writes a harness dir inside the project
+        (self.home / ".claude" / "skills").mkdir(parents=True)
+        (proj / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
+        res = skillgram.mount_project(skillgram.Hub(self.hub_root), proj, apply=True)
+        self.assertTrue(res["ok"], res)
+        self.assertTrue(res["gitignore"]["changed"])
+
+        text = (proj / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("node_modules/", text, "the existing rules must survive")
+        self.assertIn(skillgram.GITIGNORE_BEGIN, text)
+        self.assertIn(".agents/skills/", text, "links stay out of git")
+        self.assertIn(".claude/skills/", text, "every harness dir mount wrote")
+        self.assertNotIn(".agents/config.json", text, "the scope is the project's memory")
+        self.assertNotIn(".agents/\n", text, "do not hide the whole scope folder")
+
+    def test_the_block_is_idempotent(self):
+        proj = self.project()
+        (proj / ".gitignore").write_text("dist/\n", encoding="utf-8")
+        skillgram.mount_project(skillgram.Hub(self.hub_root), proj, apply=True)
+        first = (proj / ".gitignore").read_text(encoding="utf-8")
+        again = skillgram.mount_project(skillgram.Hub(self.hub_root), proj, apply=True)
+        second = (proj / ".gitignore").read_text(encoding="utf-8")
+        self.assertEqual(first, second)
+        self.assertEqual(second.count(skillgram.GITIGNORE_BEGIN), 1)
+        self.assertFalse(again["gitignore"]["changed"])
+
+    def test_a_plan_does_not_write_the_file(self):
+        proj = self.project()
+        res = skillgram.mount_project(skillgram.Hub(self.hub_root), proj, apply=False)
+        self.assertFalse((proj / ".gitignore").exists())
+        self.assertIn(".agents/skills/", res["gitignore"]["paths"])
+
+
 class TestCallerIdentity(HomeCase):
     """The usage record has to name the mask that was on: `use` wrote the constant
     "agent", so `by_harness` could never answer "which agent was I using this from".
