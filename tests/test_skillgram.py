@@ -1261,6 +1261,9 @@ class TestProtocolBlock(HomeCase):
         # and the previous harness's record has to be readable from the next one
         self.assertIn("`skillgram list --project . --used`", text)
         self.assertIn("harness-agnostic", text)
+        # a fresh clone has the set but no links: the block has to say how to get them
+        self.assertIn("`skillgram mount --apply`", text)
+        self.assertIn("`skillgram align`", text)
 
     def test_the_block_survives_injection_unchanged(self):
         proj = self.tmp / "proj"
