@@ -35,7 +35,7 @@ Links are the mechanism. Governance is the product.
 skill in this repo is [`skills/skillgram-report`](skills/skillgram-report/SKILL.md), which teaches
 an agent how to report a bug or a gap.
 
-### The four levers (1.3)
+### The five levers
 
 | Lever | Command | What it answers |
 |---|---|---|
@@ -79,6 +79,7 @@ python skillgram.py install             # harness -> hub -> MCP (delegated) -> p
 
 ```bash
 pip install skillgram                  # the command, no clone
+skillgram --version                    # 1.5.0
 ```
 
 Or from source, which is what you want if you are changing it:
@@ -100,6 +101,15 @@ skillgram doctor            # what harnesses and native skills exist here (read-
 skillgram sync              # make the disk match the hub: links only, idempotent
 skillgram status            # drift, right now
 skillgram install --dry-run # the whole machine: hub + MCP + project scope
+```
+
+Then, in a repo, the loop that makes the hub worth having:
+
+```bash
+skillgram seed qring-anti-slop   # what you always want recommended
+skillgram bootstrap --apply      # the repo's initial set (signals + seeds; LLM optional)
+skillgram mount --apply          # links where each harness looks + the protocol block
+skillgram touch <skill> --by <harness>   # declare what you used; the next harness reads it
 ```
 
 ## How it works
@@ -147,8 +157,15 @@ skills (`.agents/skills`, `.claude/skills`, `.codex/skills`, `.cursor/skills`,
 `.opencode`), and `--prune-global` goes strict: the harness homes stop seeing the hub at all
 (only links that resolve into the hub are removed; native skills stay).
 
+`mount` also keeps git out of it: the links are directories to git, so a `git add -A` would
+commit every mounted skill as a copy. It maintains a delimited block in `.gitignore` with the
+directories it writes (one per harness plus `.agents/skills/`), while `.agents/config.json` and
+`.agents/skills.json` stay tracked — that is the memory the next harness reads. Idempotent, and
+reversible by deleting the block.
+
 `project-status` also flags a skill that lives both in the hub **and** as a real copy inside
-the project.
+the project, and lists `seeds_missing`: the skills you marked as always-recommended that this
+project does not have yet. That is a recommendation, not drift — it never fails the command.
 
 ### The MCP server: let the agent ask
 
@@ -194,6 +211,33 @@ skillgram retire <skill>                          # -> <hub>/_retired/ + tombsto
 
 `use` stamps `last_used`, `use_count` and `last_used_by`. `_retired/` keeps the content plus
 `_retired.json` (who, when, why, hash) and is never treated as a category.
+
+### Which skills get recommended, and how to overrule it
+
+`bootstrap` decides with the repo's own signals: the manifests of the root **and its immediate
+subdirectories** (`backend/go.mod`, `frontend/package.json`), and only the dependencies that
+name a stack become tags. A `package.json` with a flattened lockfile inside is not a stack.
+
+Candidates are ranked deterministically: a tag in the **name** is worth 3, in the **category**
+2, in the body of the `SKILL.md` 1, and anything under 2 is dropped instead of padding the
+list. A tag matches a **word**, not a fragment, with aliases where the tag is not the word
+(`go` → `go`/`golang`, `ts` → `ts`/`typescript`) — so `godmode` is not a Go skill and
+`nodejs-keccak256` is not a React one.
+
+And when you already know your taste, say it instead of arguing with a score:
+
+```bash
+skillgram seed qring-anti-slop        # always recommended, in every repo
+skillgram seed legacy-thing --never   # never recommended, in any repo
+skillgram seed                        # print both lists
+skillgram seed <skill> --remove       # take it back
+```
+
+The seed list lives in the hub (`~/.agents/skillgram-seeds.json`), not in a project: a taste is
+not a repo. Seeds come first in `bootstrap`'s candidates whatever their score, `bootstrap
+--apply` promotes them **even with no LLM configured**, the model may add to them but never drop
+them, and `list` marks them (`seed: true`). `missing` ignores them on purpose: a lookup is a
+specific need, not a recommendation.
 
 ### Moving a hub around
 
@@ -248,6 +292,8 @@ and the skill that walks an agent through them:
 | `onboard` / `adopt` | consolidate what harnesses already have (LLM optional) / cooperative adoption. |
 | `init` / `use` / `unuse` / `mount` / `project-status` | the project scope. |
 | `index` / `search` / `missing` / `demand` | find, or learn what is missing. |
+| `touch` / `list` | declared usage: who used what, and from which harness (`by_harness`). |
+| `seed` / `seed --never` | taste: always recommended / never recommended, hub-wide. |
 | `review` / `pin` / `retire` | lifecycle. |
 | `export` / `import` / `diff` / `git` | move a hub around. |
 | `mcp` | stdio MCP server, 7 tools (`--read-only` to drop the write ones). |
@@ -261,6 +307,35 @@ one. Every command prints **exactly one JSON line** on stdout (`--json` for the 
 are the same command (the one after the subcommand wins when both are given). Exit code `0` healthy,
 `1` drift/error, `2` bad invocation — and a plan-only run (`onboard`, `precedence`, `bootstrap`)
 is `0` when the plan was produced.
+
+## What changed recently
+
+Full detail in [CHANGELOG.md](CHANGELOG.md) and in the [releases](https://github.com/Xhuk/skillgram/releases).
+
+**1.5.0 — taste is a decision, not a score**
+- `seed` / `seed --never`: the hub-level list of skills that are always (or never) recommended.
+  Seeds come first in `bootstrap` whatever their score, are promoted by `bootstrap --apply` even
+  with no LLM, and the model may add to them but never drop them.
+- Ranking is weighted and precise: name 3 / category 2 / body 1, sub-threshold noise dropped, and
+  a tag matches a word, not a fragment (`go` → `go`/`golang`, never `godmode`).
+- `project-status` recommends the seeds the project is missing (`seeds_missing`), without ever
+  failing on them.
+
+**1.4.3 — what a real repo found in ten minutes**
+- `mount` keeps git clean: a delimited `.gitignore` block for the directories it links, so
+  `git add -A` can never commit a skill as a copy. The scope (`config.json`, `skills.json`) stays
+  tracked.
+- `bootstrap` reads the manifests of the root *and its subdirectories* and stops turning every
+  dependency into a tag (a flattened lockfile is not a stack).
+
+**1.4.1 / 1.4.2 — the CLI and the record**
+- `onboard --apply` worked again (it read `categoria` while the plan writes `category`), the CLI
+  went back to English, `--hub`/`--json`/`--quiet` work before or after the subcommand,
+  `--version` exists, and `main` runs each command once (it used to hold the dispatch chain twice,
+  re-running 22 machine commands and printing nothing).
+- The usage record names the harness (`by_harness`), so switching agent does not lose what the
+  project was using. The injected protocol now says to read that record first and declare usage
+  after — and a test fails if the protocol names a command the CLI does not have.
 
 ## Authoring a skill: one contract, one gate (1.3)
 

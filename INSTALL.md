@@ -139,6 +139,18 @@ Inside the harness, ask the hub before writing a skill:
 skillgram_missing "capability I need"   -> found:false means: do not invent one silently
 skillgram_search  "docker deploy"       -> full-text over the hub
 skillgram_status                        -> hub health + project scope
+skillgram_touch   <skill>               -> declare what you used (the only usage signal)
+skillgram_list    --used                -> what this project has used, and from which harness
+skillgram_use     <skill>               -> promote it; records the harness that asked
+```
+
+`mount` injects that loop into the repo's `AGENTS.md`/`CLAUDE.md` between
+`<!-- skillgram:protocol:begin -->` markers, so a new session in a new harness reads it without
+anyone explaining it again. Say what you always want recommended once, in the hub:
+
+```bash
+skillgram seed qring-anti-slop          # always recommended, every repo
+skillgram seed <skill> --never          # never recommended, any repo
 ```
 
 ## Uninstall
@@ -148,6 +160,11 @@ skillgram_status                        -> hub health + project scope
 ```bash
 reasonix mcp remove skillgram       # or codex/claude/hermes mcp remove skillgram
 skillgram unuse <skill>...          # per project, drop it from the scope
+skillgram seed <skill> --remove     # undo a taste decision
 ```
+
+`mount` also leaves a delimited block in the repo's `.gitignore` (the directories it links, so
+git never sees the skills as copies) and the protocol block in `AGENTS.md`; both are marked and
+safe to delete by hand.
 
 The hub at `~/.agents/skills` stays: it is your library, not skillgram's.
