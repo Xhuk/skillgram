@@ -2158,6 +2158,68 @@ class TestPackageShape(HomeCase):
         self.assertIn(skillgram.VERSION, result.stdout)
 
 
+class TestPolicyByGit(HomeCase):
+    """The organization policy travels as a git ref. It had never been exercised against
+    a real repository, which is the whole point of that transport.
+    """
+
+    def setUp(self):
+        super().setUp()
+        if not shutil.which("git"):
+            self.skipTest("git is not on PATH")
+        self._env = os.environ.get(skillgram.POLICY_ENV)
+        os.environ.pop(skillgram.POLICY_ENV, None)
+
+        self.repo = self.tmp / "policy-repo"
+        self.repo.mkdir()
+        (self.repo / "policy.json").write_text(
+            json.dumps({"deny": ["clients/*"], "require": ["qring-anti-slop"]}), encoding="utf-8")
+        self.git("init", "-q", "-b", "main")
+        self.git("add", "-A")
+        self.git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "policy")
+        self.hub = skillgram.Hub(self.hub_root)
+
+    def git(self, *args) -> None:
+        subprocess.run(["git", "-C", str(self.repo), *args], check=True, capture_output=True)
+
+    def tearDown(self):
+        if self._env is None:
+            os.environ.pop(skillgram.POLICY_ENV, None)
+        else:
+            os.environ[skillgram.POLICY_ENV] = self._env
+        super().tearDown()
+
+    def test_a_git_ref_is_cloned_hashed_and_enforced(self):
+        make_skill(self.hub_root, "clients", "lotly-billing")
+        make_skill(self.hub_root, "agent-workflows", "qring-anti-slop")
+        proj = self.tmp / "proj"
+        skillgram.init_project("proj", str(proj))
+        skillgram.promote(self.hub, ["lotly-billing"], proj)
+
+        ref = f"{self.repo.as_posix()}#main"
+        checked = skillgram.policy_check(self.hub, proj, org=ref)
+        self.assertFalse(checked["ok"], checked)
+        self.assertEqual([v["skill"] for v in checked["violations"]], ["lotly-billing"])
+        self.assertEqual(checked["violations"][0]["rule"], "org:deny:clients/*")
+        # the level is reported with the hash of the content, which is what an audit quotes
+        self.assertEqual(checked["levels"][0]["level"], "org")
+        self.assertEqual(len(checked["levels"][0]["hash"]), 16)
+        self.assertEqual(checked["required_missing"], ["qring-anti-slop"])
+
+        shown = skillgram.policy_show(proj, org=ref)
+        self.assertEqual(shown["levels"][0]["deny"], ["clients/*"])
+
+        # and the environment variable is the documented way to point at it
+        os.environ[skillgram.POLICY_ENV] = ref
+        self.assertFalse(skillgram.policy_check(self.hub, proj)["ok"])
+
+    def test_a_missing_repo_is_an_error_not_a_silent_pass(self):
+        res = skillgram.policy_check(self.hub, self.tmp, org=str(self.tmp / "nope.git") + "#main")
+        self.assertFalse(res["ok"])
+        self.assertTrue(res["errors"])
+        self.assertIn("org:", res["errors"][0])
+
+
 class TestMcpThroughTheRealCli(HomeCase):
     """`install` delegates the MCP registration to the harness CLI, and every other
     test injects a Python callable. That leaves the real path unproven: an actual
