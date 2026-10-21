@@ -43,7 +43,7 @@ an agent how to report a bug or a gap.
 | **Provenance** | `SKILLMETA.json` | who wrote it, when, from where, and the hash that makes `update` possible |
 | **Declared usage** | `touch`, `list --used` / `--unused` | which skills were actually used in this project, and which never were — `by_harness` says from which agent, so changing harness does not lose the record |
 | **Taste** | `seed` / `seed --never` | the skills that are always recommended (`qring-anti-slop`) and the ones that never are — a hub-level decision, not a score |
-| **Policy** | per-harness exclude *(planned)*, `retire`, project scope | who is allowed to see this skill, and how it leaves without being deleted |
+| **Policy** | `policy check`, `--policy git…` | what may be granted or exposed at all, at three levels, with the hash an audit can quote |
 
 The honest limit, stated once: skillgram cannot see what an agent *reads*. Usage is what the agent
 declares (`skillgram touch` / the `skillgram_touch` MCP tool), and everything built on it says so.
@@ -293,6 +293,7 @@ and the skill that walks an agent through them:
 | `onboard` / `adopt` | consolidate what harnesses already have (LLM optional) / cooperative adoption. |
 | `init` / `use` / `unuse` / `mount` / `project-status` | the project scope. |
 | `align` | what each harness actually sees of this project, what it lacks, and `--apply` to link it. |
+| `policy` / `policy check` | the gate: the effective policy with its hashes, or a project checked against it (exit 1 on a violation). |
 | `index` / `search` / `missing` / `demand` | find, or learn what is missing. |
 | `touch` / `list` | declared usage: who used what, and from which harness (`by_harness`). |
 | `seed` / `seed --never` | taste: always recommended / never recommended, hub-wide. |
@@ -303,7 +304,7 @@ and the skill that walks an agent through them:
 | `new` | scaffold a skill from the contract (`SKILL.md` + `SKILLMETA.json`); `lint` decides whether it ships. |
 | `watch` / `daemon` / `install-autostart` | keep it in sync by itself. |
 
-`skillgram --help` lists all of them (39); `skillgram <command> --help` is the contract for
+`skillgram --help` lists all of them (40); `skillgram <command> --help` is the contract for
 one. Every command prints **exactly one JSON line** on stdout (`--json` for the human ones too).
 `--hub`, `--json` and `--quiet` are global: `skillgram --hub X status` and `skillgram status --hub X`
 are the same command (the one after the subcommand wins when both are given). Exit code `0` healthy,
@@ -313,6 +314,20 @@ is `0` when the plan was produced.
 ## What changed recently
 
 Full detail in [CHANGELOG.md](CHANGELOG.md) and in the [releases](https://github.com/Xhuk/skillgram/releases).
+
+**1.7.0 — `policy`: the gate, and it is not advice**
+- Three levels that merge monotonically: organization (`SKILLGRAM_POLICY` / `--policy`, a
+  path or `url#ref` of a git repo, cached and hashed), project
+  (`<repo>/.agents/policy.json`), user (`~/.agents/policy.json`). A child level may only
+  restrict: an organization `deny` cannot be undone below it.
+- `mode: open | closed`, `allow` with `!re-include`, `deny` (always wins), `require` (the
+  baseline), `harnesses` reserved and not interpreted.
+- `policy` shows every level with its hash; `policy check` names each violation with the
+  rule and exits 1. The doors refuse: `use` rejects the skill, `mount` drops it from the
+  set, `sync` does not create the link **and removes one that already exists**. `touch`
+  is never blocked — evidence is not access.
+- Impossible to enforce, stated once: this is not a sandbox. It gates what skillgram
+  writes and fails CI; a developer with a shell is outside the threat model.
 
 **1.6.0 — `align`: the harnesses, told apart**
 - `skillgram align` reports, per harness, what it can actually load of this project

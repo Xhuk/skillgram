@@ -1,6 +1,39 @@
 # Changelog
 
-## 1.6.0 (unreleased in PyPI) — `align`: the harnesses, told apart
+## 1.7.0 (unreleased in PyPI) — `policy`: the gate, and it is not advice
+
+`docs/POLICY.md` described two commands. `align` shipped in 1.6.0; this is the other half,
+with the enforcement the document promised and none of the things it refused.
+
+- **Three levels, monotonic merge.** Organization (`SKILLGRAM_POLICY` or `--policy`: a
+  path, or `url#ref` of a git repo, cloned shallow into `~/.agents/policy-cache` and
+  hashed), project (`<repo>/.agents/policy.json`), user (`~/.agents/policy.json`). The
+  effective verdict is the union of the restrictions, so a project file cannot undo an
+  organization `deny` — the one property that makes the word policy mean something.
+- **Shape as signed:** `mode: open|closed`, `allow` (with `!pattern` re-includes, last
+  match wins), `deny` (beats allow, same level and above), `require` (the baseline),
+  `harnesses` accepted, validated and **not interpreted** (reserved), `source` for origin.
+  An unreadable file is an error, never a silent pass.
+- **`policy` / `policy check`.** `show` prints every level with its hash (what an audit
+  quotes) and the merged `require`; `check` names each violation with the rule that
+  produced it plus the `require`d skills the project is missing, and exits 1.
+- **The doors refuse.** `use` rejects the skill and keeps the allowed ones
+  (`denied: [{skill, rule}]`); `mount` drops it from the set (`policy_skipped`); `sync`
+  does not create the link and removes one that already exists — that is what `deny`
+  means, and it is reversible by allowing it again. `touch` is never blocked: recording
+  that something was used is evidence, not access. `require` is enforced by `check` and
+  reported, not by `mount`: a baseline is a statement about a scope, and the scope is the
+  developer's until CI says otherwise.
+- **11 tests** (levels, hash, `!` re-include, closed mode, monotonicity, require,
+  malformed file, reserved key, the CLI, the three doors, `touch` untouched), 158 total.
+
+### Building notes that changed the design
+
+- `--fail` was dropped: a check that has to be told to fail is a check that lies by
+  default. `policy check` exits 1 on its own.
+- `sync` removing a denied link was not in the draft. It follows from `deny`: if the
+  policy says the skill must not be exposed, a link that already exists is drift.
+
 
 `main` carries it and CI is green; the index still serves 1.5.0 on purpose. It goes out
 together with `policy` (see [docs/POLICY.md](docs/POLICY.md)), so the release notes and

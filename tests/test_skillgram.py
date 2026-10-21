@@ -1696,6 +1696,184 @@ class TestAlign(HomeCase):
         self.assertEqual(row["fix"], "mount")
 
 
+class PolicyCase(HomeCase):
+    """A project with a policy at each level, and one skill per outcome."""
+
+    def setUp(self):
+        super().setUp()
+        self._env = os.environ.get(skillgram.POLICY_ENV)
+        os.environ.pop(skillgram.POLICY_ENV, None)
+        self.hub = skillgram.Hub(self.hub_root)
+        make_skill(self.hub_root, "infra-ops", "deploy")
+        make_skill(self.hub_root, "clients", "lotly-billing")
+        make_skill(self.hub_root, "agent-workflows", "qring-anti-slop")
+        self.proj = self.tmp / "proj"
+        skillgram.init_project("proj", str(self.proj))
+        skillgram.promote(self.hub, ["deploy", "lotly-billing"], self.proj)
+
+    def tearDown(self):
+        if self._env is None:
+            os.environ.pop(skillgram.POLICY_ENV, None)
+        else:
+            os.environ[skillgram.POLICY_ENV] = self._env
+        super().tearDown()
+
+    def write(self, level: str, data: dict) -> Path:
+        if level == "project":
+            path = skillgram.project_dir(self.proj) / skillgram.POLICY_FILE
+        elif level == "user":
+            path = skillgram.user_policy_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            path = self.tmp / "org-policy.json"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return path
+
+
+class TestPolicyReadOnly(PolicyCase):
+    """The gate reports before it denies: `policy` shows the levels and `policy check`
+    names every violation with the rule that produced it.
+    """
+
+    def test_no_policy_means_everything_is_allowed(self):
+        res = skillgram.policy_check(self.hub, self.proj)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["levels"], [])
+        self.assertEqual(res["violations"], [])
+
+    def test_a_project_deny_is_a_violation_with_its_rule(self):
+        self.write("project", {"deny": ["clients/*"]})
+        res = skillgram.policy_check(self.hub, self.proj)
+        self.assertFalse(res["ok"])
+        self.assertEqual([v["skill"] for v in res["violations"]], ["lotly-billing"])
+        self.assertEqual(res["violations"][0]["rule"], "project:deny:clients/*")
+
+    def test_a_closed_level_allows_only_what_it_lists(self):
+        self.write("project", {"mode": "closed", "allow": ["infra-ops/*"]})
+        res = skillgram.policy_check(self.hub, self.proj)
+        self.assertEqual([v["rule"] for v in res["violations"]], ["project:closed"])
+
+    def test_a_bang_pattern_re_includes_inside_a_closed_level(self):
+        self.write("project", {"mode": "closed", "allow": ["*", "!clients/*"]})
+        res = skillgram.policy_check(self.hub, self.proj)
+        self.assertEqual([v["skill"] for v in res["violations"]], ["lotly-billing"])
+
+    def test_a_child_level_cannot_lift_a_parent_deny(self):
+        org = self.write("org", {"deny": ["clients/lotly-*"]})
+        self.write("project", {"mode": "open", "allow": ["clients/*"]})
+        os.environ[skillgram.POLICY_ENV] = str(org)
+        res = skillgram.policy_check(self.hub, self.proj)
+        self.assertFalse(res["ok"], "a project file must not undo an organization deny")
+        self.assertEqual(res["violations"][0]["rule"], "org:deny:clients/lotly-*")
+        self.assertEqual([lv["level"] for lv in res["levels"]], ["org", "project"])
+
+    def test_require_reports_what_the_project_is_missing(self):
+        self.write("project", {"require": ["qring-anti-slop", "contract-first"]})
+        res = skillgram.policy_check(self.hub, self.proj)
+        self.assertEqual(res["required_missing"], ["contract-first", "qring-anti-slop"])
+        skillgram.promote(self.hub, ["qring-anti-slop"], self.proj)
+        res = skillgram.policy_check(self.hub, self.proj)
+        self.assertEqual(res["required_missing"], ["contract-first"])
+
+    def test_show_reports_each_level_with_a_hash(self):
+        self.write("project", {"deny": ["clients/*"]})
+        res = skillgram.policy_show(self.proj)
+        self.assertEqual(res["levels"][0]["level"], "project")
+        self.assertEqual(len(res["levels"][0]["hash"]), 16)
+        self.assertEqual(res["levels"][0]["deny"], ["clients/*"])
+
+    def test_a_broken_file_is_an_error_not_a_silent_pass(self):
+        path = skillgram.project_dir(self.proj) / skillgram.POLICY_FILE
+        path.write_text("{not json", encoding="utf-8")
+        res = skillgram.policy_check(self.hub, self.proj)
+        self.assertFalse(res["ok"])
+        self.assertTrue(res["errors"])
+        self.assertIn("invalid JSON", res["errors"][0])
+
+    def test_the_reserved_harness_key_is_reported_but_not_enforced(self):
+        self.write("project", {"harnesses": {"cursor": {"deny": ["infra-ops/*"]}}})
+        shown = skillgram.policy_show(self.proj)
+        self.assertEqual(shown["levels"][0]["harnesses_reserved"], ["cursor"])
+        res = skillgram.policy_check(self.hub, self.proj)
+        self.assertTrue(res["ok"], "per-harness is reserved in 1.7, not interpreted")
+
+    def test_the_cli_shows_and_checks(self):
+        self.write("project", {"deny": ["clients/*"]})
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = skillgram.main(["policy", "show", "--project", str(self.proj), "--hub", str(self.hub_root)])
+        self.assertEqual(code, 0)
+        self.assertIn("project", buf.getvalue())
+        self.assertIn("deny: clients/*", buf.getvalue())
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = skillgram.main(["policy", "check", "--project", str(self.proj), "--hub", str(self.hub_root)])
+        self.assertEqual(code, 1, "a violation is drift")
+        self.assertIn("lotly-billing", buf.getvalue())
+
+    def test_json_is_one_line(self):
+        self.write("project", {"deny": ["clients/*"]})
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            skillgram.main(["policy", "check", "--json", "--project", str(self.proj),
+                            "--hub", str(self.hub_root)])
+        payload = json.loads(buf.getvalue().strip())
+        self.assertEqual(payload["op"], "policy")
+        self.assertEqual(payload["action"], "check")
+
+
+class TestPolicyEnforced(PolicyCase):
+    """The two doors that actually write: `use` refuses, `mount` and `sync` skip."""
+
+    def test_use_refuses_a_denied_skill_and_says_why(self):
+        self.write("project", {"deny": ["agent-workflows/*"]})
+        res = skillgram.promote(self.hub, ["qring-anti-slop", "deploy"], self.proj)
+        self.assertFalse(res["ok"])
+        self.assertEqual([d["skill"] for d in res["denied"]], ["qring-anti-slop"])
+        self.assertEqual(res["denied"][0]["rule"], "project:deny:agent-workflows/*")
+        # the allowed one still goes through
+        self.assertIn("deploy", res["created"] + res["already_present"])
+        self.assertFalse((skillgram.project_dir(self.proj) / "skills" / "qring-anti-slop").exists())
+
+    def test_mount_skips_the_denied_one(self):
+        self.write("project", {"deny": ["clients/*"]})
+        (self.home / ".claude" / "skills").mkdir(parents=True)
+        res = skillgram.mount_project(self.hub, self.proj, apply=True)
+        self.assertEqual(res["skills"], 1)
+        self.assertEqual([s["skill"] for s in res["policy_skipped"]], ["lotly-billing"])
+        self.assertTrue((self.proj / ".claude" / "skills" / "deploy").exists())
+        self.assertFalse((self.proj / ".claude" / "skills" / "lotly-billing").exists())
+
+    def test_sync_removes_a_denied_link_and_never_recreates_it(self):
+        skills_dir = self.home / ".claude" / "skills"
+        skills_dir.mkdir(parents=True)
+        # an old link that the policy now forbids
+        skillgram.make_links([(skills_dir / "lotly-billing", self.hub_root / "clients" / "lotly-billing")])
+        self.assertTrue(skillgram.is_link(skills_dir / "lotly-billing"))
+
+        self.write("user", {"deny": ["clients/*"]})
+        skillgram.sync(self.hub, quiet=True)
+        self.assertFalse(os.path.lexists(skills_dir / "lotly-billing"), "deny is not advice")
+        self.assertTrue(skillgram.is_link(skills_dir / "deploy"), "the rest keeps working")
+
+    def test_align_apply_links_nothing_denied(self):
+        self.write("project", {"deny": ["clients/*"]})
+        (self.home / ".claude" / "skills").mkdir(parents=True)
+        res = skillgram.align(self.hub, self.proj, apply=True)
+        self.assertEqual(res["skills"], 2, "align counts the set, the door filters it")
+        self.assertFalse((self.proj / ".claude" / "skills" / "lotly-billing").exists())
+
+    def test_touch_is_never_blocked(self):
+        self.write("project", {"deny": ["clients/*"]})
+        res = skillgram.touch_usage(self.proj, ["lotly-billing"], by="claude")
+        self.assertEqual(res["touched"], ["lotly-billing"], "evidence is not access")
+
+
+def plan_skips(hub) -> list:
+    return skillgram.plan(hub, deep=True, policy=skillgram.policy_for(None)).skipped
+
+
 class TestMcpThroughTheRealCli(HomeCase):
     """`install` delegates the MCP registration to the harness CLI, and every other
     test injects a Python callable. That leaves the real path unproven: an actual

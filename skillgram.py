@@ -65,6 +65,7 @@ macOS/Linux with symlinks.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -77,7 +78,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto
@@ -257,7 +258,8 @@ def link_target(path: Path) -> Path | None:
     return target
 
 
-def plan(hub: Hub, agents: list[Path] | None = None, deep: bool = False) -> Plan:
+def plan(hub: Hub, agents: list[Path] | None = None, deep: bool = False,
+         policy: list | None = None) -> Plan:
     """Calcula el drift sin tocar nada.
 
     RÃƒÂ¡pido por defecto: **un `scandir` por agente** y `readlink` sÃƒÂ³lo en los links que
@@ -273,6 +275,14 @@ def plan(hub: Hub, agents: list[Path] | None = None, deep: bool = False) -> Plan
     result = Plan()
     hub_root = hub.root.resolve()
     agents = agents if agents is not None else hub.agents()
+    levels = policy if policy is not None else []
+    blocked = {}
+    if levels:
+        # a denied skill is never linked into a home either: `sync` is the second door
+        for name, tipo in skills.items():
+            verdict = policy_verdict(levels, tipo, name)
+            if not verdict["allowed"]:
+                blocked[name] = verdict["rule"]
 
     for agent in agents:
         is_hub = agent.resolve() == hub_root
@@ -282,6 +292,8 @@ def plan(hub: Hub, agents: list[Path] | None = None, deep: bool = False) -> Plan
             for tipo in tipos:
                 expected[tipo] = hub_root / tipo
         for name, tipo in skills.items():
+            if name in blocked:
+                continue
             expected[name] = hub_root / tipo / name
 
         present: set[str] = set()
@@ -324,7 +336,8 @@ def plan(hub: Hub, agents: list[Path] | None = None, deep: bool = False) -> Plan
             result.missing.append((link, target))
             counts["categories" if name in tipos and not is_hub else "flat"] += 1
 
-        # 2) links nuestros que ya no aplican (skill borrada, renombrada o manzana removed)
+        # 2) links nuestros que ya no aplican (skill borrada, renombrada o bloqueada por
+        # policy: deny no es un consejo)
         for name in sorted(links - set(expected)):
             link = agent / name
             target = link_target(link)
@@ -449,7 +462,7 @@ def apply_plan(p: Plan, quiet: bool = False) -> dict:
 
 def sync(hub: Hub, quiet: bool = False, dry_run: bool = False) -> dict:
     # sync va profundo: es el que arregla un enlace torcido.
-    p = plan(hub, deep=True)
+    p = plan(hub, deep=True, policy=policy_for(None))
     if dry_run:
         return {"ok": True, "dryRun": True, **p.summary()}
     done = apply_plan(p, quiet=quiet)
@@ -629,13 +642,19 @@ def promote(hub: Hub, names: list[str], project: Path) -> dict:
     already: list[str] = []
     unknown: list[str] = []
     occupied: list[str] = []
+    denied: list[dict] = []
     batch: list[tuple[Path, Path]] = []
+    levels = policy_for(project)
 
     for raw in names:
         name = raw.strip()
         tipo = known.get(name)
         if not tipo:
             unknown.append(name)
+            continue
+        verdict = policy_verdict(levels, tipo, name)
+        if not verdict["allowed"]:
+            denied.append({"skill": name, "category": tipo, "rule": verdict["rule"]})
             continue
         src = hub.root / tipo / name
         dest = links_dir / name
@@ -670,7 +689,7 @@ def promote(hub: Hub, names: list[str], project: Path) -> dict:
     _write_manifest(project, manifest)
 
     return {
-        "ok": not unknown and not occupied,
+        "ok": not unknown and not occupied and not denied,
         "op": "use",
         "project": str(project),
         "project_name": manifest["project_name"],
@@ -678,6 +697,7 @@ def promote(hub: Hub, names: list[str], project: Path) -> dict:
         "already_present": already,
         "unknown": unknown,
         "ocupadas_sin_enlace": occupied,
+        "denied": denied,
         "manifest": str(project_dir(project) / PROJECT_MANIFEST),
     }
 
@@ -1626,6 +1646,14 @@ def mount_project(hub: Hub, project: Path, apply: bool = False, prune_global: bo
             "error": "the project has no skills in scope; run `skillgram use <skill>...` first",
         }
     wanted = {r["name"]: Path(r["src"]) for r in scope["skills"]}
+    # the same gate as `use`: a skill the policy denies is never exposed here either
+    tiers = policy_for(project)
+    denied_mount = {}
+    for name, src in list(wanted.items()):
+        verdict = policy_verdict(tiers, src.parent.name, name)
+        if not verdict["allowed"]:
+            denied_mount[name] = verdict["rule"]
+            del wanted[name]
     harnesses = [h["app"] for h in detect_harnesses() if h["instalado"]]
     if only:
         wanted_harnesses = {normalize_harness(h) for h in only}
@@ -1693,6 +1721,7 @@ def mount_project(hub: Hub, project: Path, apply: bool = False, prune_global: bo
         "applied": apply,
         "harnesses": rows,
         "gitignore": ignores,
+        "policy_skipped": [{"skill": name, "rule": rule} for name, rule in sorted(denied_mount.items())],
         "global": pruned,
     }
 
@@ -2008,6 +2037,14 @@ SEEDS_ENV = "SKILLGRAM_SEEDS"
 SEED_MODES = ("always", "never")
 ALIGN_LIST_LIMIT = 25
 
+# ---- policy: the gate ------------------------------------------------------
+# One format, three levels. A child level may only restrict, never expand: the
+# effective rule for a skill is the union of every restriction that applies, so an
+# organization `deny` cannot be undone by a project or a user file.
+POLICY_FILE = "policy.json"
+POLICY_ENV = "SKILLGRAM_POLICY"
+POLICY_MODES = ("open", "closed")
+
 
 def seeds_path() -> Path:
     env = (os.environ.get(SEEDS_ENV) or "").strip()
@@ -2078,6 +2115,192 @@ def seed_skills(hub: Hub, names: list, mode: str = "always", remove: bool = Fals
         "always": seeds["always"],
         "never": seeds["never"],
         "file": str(path),
+    }
+
+
+def _pattern_hits(pattern: str, category: str, name: str) -> bool:
+    """A pattern matches `<category>/<skill>` or the bare skill name, `*` included."""
+    pat = pattern.lstrip("!")
+    return fnmatch.fnmatchcase(f"{category}/{name}", pat) or fnmatch.fnmatchcase(name, pat)
+
+
+def user_policy_path() -> Path:
+    return HOME / ".agents" / POLICY_FILE
+
+
+def org_policy_ref() -> str:
+    return (os.environ.get(POLICY_ENV) or "").strip()
+
+
+def _policy_shape(data) -> dict:
+    """Only the documented keys, with documented types. Unknown keys never count."""
+    if not isinstance(data, dict):
+        return {}
+    mode = str(data.get("mode") or "open").strip().lower()
+    out = {"mode": mode if mode in POLICY_MODES else "open"}
+    for key in ("allow", "deny", "require"):
+        values = data.get(key)
+        out[key] = [str(v).strip() for v in values if str(v).strip()] if isinstance(values, list) else []
+    harnesses = data.get("harnesses")
+    out["harnesses"] = harnesses if isinstance(harnesses, dict) else {}  # reserved: validated, not read
+    source = data.get("source")
+    out["source"] = source if isinstance(source, dict) else {}
+    return out
+
+
+def _policy_hash(data: dict) -> str:
+    blob = json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
+def _read_policy_file(path: Path) -> tuple:
+    """(shape, error). A missing file is not an error: most levels are absent."""
+    if not path.is_file():
+        return {}, ""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        return {}, f"{path}: {exc}"
+    except ValueError as exc:
+        return {}, f"{path}: invalid JSON ({exc})"
+    return _policy_shape(data), ""
+
+
+def _materialize_policy(ref: str) -> tuple:
+    """A policy reference is a git repo (`url#ref`) or a file on disk."""
+    looks_git = (ref.startswith(("git@", "http://", "https://", "ssh://"))
+                 or ref.endswith(".git") or "#" in ref)
+    if not looks_git:
+        path = Path(ref).expanduser()
+        return path, ("" if path.is_file() else f"policy file not found: {path}")
+    url, _, branch = ref.partition("#")
+    branch = branch or "main"
+    key = hashlib.sha1(f"{url}#{branch}".encode("utf-8")).hexdigest()[:12]
+    dest = HOME / ".agents" / "policy-cache" / key
+    git = _which("git")
+    if not git:
+        return Path(), "git is not on PATH, so the organization policy cannot be fetched"
+    if (dest / ".git").is_dir():
+        code, out = run_cli([git, "-C", str(dest), "fetch", "--depth", "1", "origin", branch], timeout=180)
+        if code != 0:
+            return Path(), f"git fetch failed for {url}#{branch}: {_first_lines(out, 2)}"
+        run_cli([git, "-C", str(dest), "reset", "--hard", "FETCH_HEAD"], timeout=120)
+    else:
+        code, out = run_cli([git, "clone", "--depth", "1", "--branch", branch, url, str(dest)], timeout=180)
+        if code != 0:
+            return Path(), f"git clone failed for {url}#{branch}: {_first_lines(out, 2)}"
+    for candidate in (dest / POLICY_FILE, dest / ".agents" / POLICY_FILE):
+        if candidate.is_file():
+            return candidate, ""
+    return Path(), f"{POLICY_FILE} not found in {url}#{branch}"
+
+
+def load_policy(project: Path | None = None, org: str | None = None) -> dict:
+    """Every level that exists, in blocking order, with the hash an audit can quote."""
+    org_ref = (org if org is not None else org_policy_ref()).strip()
+    resolvers = []
+    if org_ref:
+        resolvers.append(("org", lambda: _materialize_policy(org_ref)))
+    if project is not None:
+        resolvers.append(("project", lambda: (project_dir(project) / POLICY_FILE, "")))
+    resolvers.append(("user", lambda: (user_policy_path(), "")))
+    levels, errors = [], []
+    for level, resolve in resolvers:
+        path, error = resolve()
+        if error:
+            errors.append(f"{level}: {error}")
+            continue
+        data, read_error = _read_policy_file(path)
+        if read_error:
+            errors.append(f"{level}: {read_error}")
+            continue
+        if not data:
+            continue
+        levels.append({"level": level, "path": str(path), "hash": _policy_hash(data), **data})
+    return {
+        "levels": levels,
+        "errors": errors,
+        "org": org_ref,
+        # `require` is the union: a parent baseline cannot be relaxed either
+        "require": sorted({item for level in levels for item in level["require"]}),
+    }
+
+
+def policy_verdict(levels: list, category: str, name: str) -> dict:
+    """First level that blocks decides the reason; inside a level, deny beats allow."""
+    for level in levels:
+        for pattern in level["deny"]:
+            if _pattern_hits(pattern, category, name):
+                return {"allowed": False, "rule": f"{level['level']}:deny:{pattern}"}
+        if level["mode"] == "closed":
+            matched = False
+            for pattern in level["allow"]:
+                if _pattern_hits(pattern, category, name):
+                    # `!pattern` re-includes; the last matching pattern wins
+                    matched = not pattern.startswith("!")
+            if not matched:
+                return {"allowed": False, "rule": f"{level['level']}:closed"}
+    return {"allowed": True, "rule": ""}
+
+
+def policy_filter(levels: list, items: list) -> tuple:
+    """(allowed names, denied rows) for [(name, category), ...]."""
+    allowed, denied = [], []
+    for name, category in items:
+        verdict = policy_verdict(levels, category or "", name)
+        if verdict["allowed"]:
+            allowed.append(name)
+        else:
+            denied.append({"skill": name, "category": category or "", "rule": verdict["rule"]})
+    return allowed, denied
+
+
+def policy_for(project: Path | None = None) -> list:
+    """The levels that apply right now -- what the doors call before they write."""
+    return load_policy(project).get("levels") or []
+
+
+def policy_show(project: Path | None = None, org: str | None = None) -> dict:
+    loaded = load_policy(project, org)
+    return {
+        "ok": not loaded["errors"],
+        "op": "policy",
+        "action": "show",
+        "project": str(project) if project is not None else None,
+        "org": loaded["org"],
+        "levels": [
+            {"level": level["level"], "path": level["path"], "mode": level["mode"],
+             "hash": level["hash"], "allow": level["allow"], "deny": level["deny"],
+             "require": level["require"],
+             "harnesses_reserved": sorted(level["harnesses"])}
+            for level in loaded["levels"]
+        ],
+        "require": loaded["require"],
+        "errors": loaded["errors"],
+    }
+
+
+def policy_check(hub: Hub, project: Path, org: str | None = None) -> dict:
+    """Violations in this project's scope, plus the `require`d skills it is missing."""
+    loaded = load_policy(project, org)
+    scope = project_scope(hub, project)
+    items = [(row["name"], row["tipo"]) for row in scope["skills"]]
+    _allowed, denied = policy_filter(loaded["levels"], items)
+    required_missing = [
+        pattern for pattern in loaded["require"]
+        if not any(_pattern_hits(pattern, row["tipo"], row["name"]) for row in scope["skills"])
+    ]
+    return {
+        "ok": not denied and not required_missing and not loaded["errors"],
+        "op": "policy",
+        "action": "check",
+        "project": str(project),
+        "levels": [{"level": level["level"], "path": level["path"], "hash": level["hash"],
+                    "mode": level["mode"]} for level in loaded["levels"]],
+        "errors": loaded["errors"],
+        "scope": len(items),
+        "violations": denied,
+        "required_missing": required_missing,
     }
 
 
@@ -4334,6 +4557,12 @@ def build_parser() -> argparse.ArgumentParser:
                              help="what each harness actually sees of this project, and what it lacks")
     p_align.add_argument("--project")
     p_align.add_argument("--apply", action="store_true", help="link the missing ones (never removes, never touches natives)")
+
+    p_policy = sub.add_parser("policy", parents=[common],
+                              help="the gate: show the effective policy, or check a project against it")
+    p_policy.add_argument("action", nargs="?", choices=["show", "check"], default="show")
+    p_policy.add_argument("--project")
+    p_policy.add_argument("--policy", help="organization policy: a path, or url#ref of a git repo")
     return ap
 
 
@@ -4616,6 +4845,17 @@ def dispatch(args, hub: Hub) -> dict | int:
         result["resolucion"] = proj["source"]
         return result
 
+    if cmd == "policy":
+        proj = resolve_project(args.project) if (args.project or args.action == "check") else None
+        root = Path(proj["path"]) if proj else None
+        if args.action == "check":
+            result = policy_check(hub, root or Path.cwd(), org=args.policy)
+        else:
+            result = policy_show(root, org=args.policy)
+        if proj:
+            result["resolucion"] = proj["source"]
+        return result
+
     return {"ok": False, "op": cmd, "error": f"unknown command: {cmd}"}  # argparse ya valida
 
 
@@ -4726,6 +4966,41 @@ def human_output(args, result: dict) -> str | None:
         if result.get("unknown"):
             lines.append(f"not in the hub: {', '.join(result['unknown'])}")
         lines.append(f"file: {result['file']}")
+        return "\n".join(lines)
+
+    if cmd == "policy" and result.get("action") == "show":
+        lines = [f"organization: {result['org'] or '(none: set SKILLGRAM_POLICY or --policy)'}"]
+        if not result["levels"]:
+            lines.append("no policy files found: everything is allowed (mode open by default)")
+        for level in result["levels"]:
+            lines.append(f"{level['level']:<8} {level['mode']:<7} {level['hash']}  {level['path']}")
+            for key in ("allow", "deny", "require"):
+                if level[key]:
+                    lines.append(f"         {key}: {', '.join(level[key])}")
+            if level["harnesses_reserved"]:
+                lines.append(f"         harnesses (reserved, not enforced in 1.7): "
+                             f"{', '.join(level['harnesses_reserved'])}")
+        if result["require"]:
+            lines.append(f"required anywhere: {', '.join(result['require'])}")
+        for error in result["errors"]:
+            lines.append(f"error: {error}")
+        return "\n".join(lines)
+
+    if cmd == "policy" and result.get("action") == "check":
+        lines = [
+            f"project: {result['project']}  scope: {result['scope']}",
+            "levels: " + (", ".join(f"{lv['level']}@{lv['hash']}" for lv in result["levels"]) or "(none)"),
+        ]
+        if result["violations"]:
+            lines.append(f"violations: {len(result['violations'])}")
+            for item in result["violations"]:
+                lines.append(f"  {item['skill']}  ({item['category']})  <- {item['rule']}")
+        else:
+            lines.append("violations: none")
+        if result["required_missing"]:
+            lines.append(f"required but not in scope: {', '.join(result['required_missing'])}")
+        for error in result["errors"]:
+            lines.append(f"error: {error}")
         return "\n".join(lines)
 
     if cmd == "align":

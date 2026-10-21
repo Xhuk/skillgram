@@ -1,7 +1,8 @@
 # Keeping things in order: `align`, and `policy` as the gate
 
-Design note. **`align` is implemented (1.6.0); `policy` is not.** The document
-exists so the decisions can be argued and signed before the rest is built.
+Design note. **`align` and `policy` are implemented (1.6.0 / 1.7.0).** The document
+remains the reference for the decisions, including the ones taken while building; the
+sections below say where the code ended up differing.
 
 The audience is the same person in two postures:
 
@@ -96,9 +97,11 @@ union of everything, which is the problem the tool exists to solve. If a native 
 matters, the path is `adopt` (hub) → `use` (project) → `align` (everyone), and that is
 a decision with a name on it.
 
-## 5. `policy` — the gate
+## 5. `policy` — the gate (implemented in 1.7.0)
 
-One format, three locations, one merged result.
+One format, three locations, one merged result. `SKILLGRAM_POLICY` (or `--policy`) points
+at the organization policy; `policy show` prints every level with the hash an audit can
+quote, and `policy check` names each violation with the rule that produced it.
 
 ### 5.1 Locations and authority
 
@@ -139,28 +142,39 @@ worth the name in a company, and it is a single rule to remember.
 - `source`: only when the policy came from elsewhere; the hash is what makes an
   organization policy auditable rather than aspirational.
 
-### 5.3 What each door does on a violation
+### 5.3 What each door does on a violation (as built)
 
 | Door | `deny` / not in `allow` | `require` missing |
 |---|---|---|
-| `use` (grant) | refuses, exit 1, names the rule | n/a |
-| `mount` / `sync` (expose) | skips the link, reports it | fails at the end, exit 1 |
-| MCP `skillgram_use` / `propose --apply` | refuses with the rule | n/a |
-| `align --apply` | skips and reports | reports |
-| `doctor` / `status` / `project-status` | report `policy_violations` | report `seeds_missing`-style |
+| `use` (grant) | refuses that skill, `ok: false`, `denied: [{skill, rule}]`; the allowed ones still go through | n/a |
+| `mount` (expose in the repo) | drops it from the set and reports `policy_skipped` | not enforced here (it is a scope question) |
+| `sync` (expose in the homes) | does not create the link, and **removes** one that already exists: `deny` is not advice | n/a |
+| MCP `skillgram_use` / `skillgram_touch` | `use` refuses with the rule; `touch` is never blocked | n/a |
+| `align --apply` | cannot link what `mount` refuses | reports `missing` |
 | `policy check` | exit 1 | exit 1 |
+| `policy show` | prints the levels and their hashes | — |
+
+`require` is enforced by `policy check` (the CI gate) and reported, not by `mount`: a
+baseline is a statement about a project's scope, and the scope belongs to the developer
+until CI says otherwise.
 
 `touch` is never blocked: recording that something was used is evidence, not access.
 
 ### 5.4 `policy check` — the CI line
 
 ```
-$ skillgram policy check --fail
-{"ok": false, "op": "policy-check", "violations": [{"skill": "clients/lotly-billing",
-  "rule": "org:deny:clients/lotly-*", "where": "project scope"}], "required_missing": []}
+$ skillgram policy check --project .
+project: /repo  scope: 11
+levels: org@6edc0685262b6cd8
+violations: none
+required but not in scope: contract-first
 $ echo $?
 1
 ```
+
+`--fail` from the earlier draft was dropped: a check that has to be told to fail is a
+check that lies by default. `policy check` exits 1 on violations, on missing `require`
+and on a policy file it cannot read.
 
 That is the whole corporate story in one step: a repo, a policy, one line in the
 pipeline, and a violation that cannot be merged.
