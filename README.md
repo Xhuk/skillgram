@@ -292,7 +292,8 @@ and the skill that walks an agent through them:
 | `install` / `propagate` | the whole machine / the repo sweep, with a ledger. |
 | `onboard` / `adopt` | consolidate what harnesses already have (LLM optional) / cooperative adoption. |
 | `init` / `use` / `unuse` / `mount` / `project-status` | the project scope. |
-| `align` | what each harness actually sees of this project, what it lacks, and `--apply` to link it. |
+| `align` | what each harness actually sees of this project, what it lacks, and `--apply` to link it. `--hashes` says which content each one reads. |
+| `clone` | bring a hub in from a git repo (private or public) and link it: the between-machines door. |
 | `policy` / `policy check` | the gate: the effective policy with its hashes, or a project checked against it (exit 1 on a violation). |
 | `index` / `search` / `missing` / `demand` | find, or learn what is missing. |
 | `touch` / `list` | declared usage: who used what, and from which harness (`by_harness`). |
@@ -304,7 +305,7 @@ and the skill that walks an agent through them:
 | `new` | scaffold a skill from the contract (`SKILL.md` + `SKILLMETA.json`); `lint` decides whether it ships. |
 | `watch` / `daemon` / `install-autostart` | keep it in sync by itself. |
 
-`skillgram --help` lists all of them (40); `skillgram <command> --help` is the contract for
+`skillgram --help` lists all of them (41); `skillgram <command> --help` is the contract for
 one. Every command prints **exactly one JSON line** on stdout (`--json` for the human ones too).
 `--hub`, `--json` and `--quiet` are global: `skillgram --hub X status` and `skillgram status --hub X`
 are the same command (the one after the subcommand wins when both are given). Exit code `0` healthy,
@@ -314,6 +315,22 @@ is `0` when the plan was produced.
 ## What changed recently
 
 Full detail in [CHANGELOG.md](CHANGELOG.md) and in the [releases](https://github.com/Xhuk/skillgram/releases).
+
+**1.8.0 — `clone`: bring a hub in from a git repo**
+- `skillgram clone <url> [--hub PATH] [--ref BRANCH|TAG] [--force] [--no-sync]` — git does
+  the transport, and therefore the auth for a private repo; skillgram verifies what
+  arrived and, unless `--no-sync`, links the harnesses so the skills are usable without a
+  second command. `--ref` takes one branch or tag.
+- **Nothing is overwritten.** A target that is a repo of the same origin gets
+  `pull --ff-only`; another origin is refused unless `--force` (which re-points the
+  remote); a non-empty folder that is not a repo is refused unless `--force`, and then it
+  **merges without clobbering**: the skills you already had win and are reported as
+  `conflicts`.
+- It reports `skills`, `categories`, `commit` and `origin` — which is what a `hub.json`
+  cannot tell you: which revision these came from.
+- `align --hashes` answers the other half of the same question: per skill, the hub hash,
+  the hash the project recorded at `use` time, and what each harness actually reads (the
+  link, a forked copy with its own hash, or nothing).
 
 **1.7.0 — `policy`: the gate, and it is not advice**
 - Three levels that merge monotonically: organization (`SKILLGRAM_POLICY` / `--policy`, a

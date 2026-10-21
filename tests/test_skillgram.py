@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1673,6 +1674,48 @@ class TestAlign(HomeCase):
         self.assertFalse(skillgram.is_link(native))
         self.assertTrue((native / "SKILL.md").is_file())
 
+    def test_hashes_say_what_each_harness_reads(self):
+        proj = self.project()
+        self.harness(".claude")
+        skillgram.align(skillgram.Hub(self.hub_root), proj, apply=True)
+
+        rows = {r["skill"]: r for r in skillgram.align_hashes(skillgram.Hub(self.hub_root), proj)}
+        deploy = rows["deploy"]
+        self.assertFalse(deploy["stale"])
+        self.assertEqual(deploy["hub"], deploy["manifest"])
+        self.assertEqual(deploy["harnesses"]["claude-code"]["state"], "link")
+
+        # the hub moves: the manifest is now behind, and that is the whole "version" story
+        (self.hub_root / "infra-ops" / "deploy" / "SKILL.md").write_text("v2\n", encoding="utf-8")
+        deploy = {r["skill"]: r for r in skillgram.align_hashes(skillgram.Hub(self.hub_root), proj)}["deploy"]
+        self.assertTrue(deploy["stale"])
+        self.assertNotEqual(deploy["hub"], deploy["manifest"])
+
+    def test_a_forked_copy_shows_its_own_hash(self):
+        proj = self.project()
+        self.harness(".claude")
+        skillgram.align(skillgram.Hub(self.hub_root), proj, apply=True)
+        link = proj / ".claude" / "skills" / "deploy"
+        self.assertTrue(skillgram._remove_junction(link))
+        link.mkdir()
+        (link / "SKILL.md").write_text("---\nname: deploy\n---\nforked\n", encoding="utf-8")
+
+        row = {r["skill"]: r for r in skillgram.align_hashes(skillgram.Hub(self.hub_root), proj)}["deploy"]
+        seen = row["harnesses"]["claude-code"]
+        self.assertEqual(seen["state"], "native")
+        self.assertNotEqual(seen["hash"], row["hub"])
+
+    def test_the_cli_flag_adds_the_table(self):
+        proj = self.project()
+        self.harness(".claude")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = skillgram.main(["align", "--hashes", "--apply", "--project", str(proj),
+                                   "--hub", str(self.hub_root)])
+        self.assertEqual(code, 0)
+        self.assertIn("manifest", buf.getvalue())
+        self.assertIn("ok", buf.getvalue())
+
     def test_the_cli_reports_a_table_and_exits_by_missing(self):
         proj = self.project()
         self.harness(".claude")
@@ -1875,6 +1918,102 @@ class TestPolicyEnforced(PolicyCase):
 
 def plan_skips(hub) -> list:
     return skillgram.plan(hub, deep=True, policy=skillgram.policy_for(None)).skipped
+
+
+class TestClone(HomeCase):
+    """`clone` is the between-machines door: a git repo (private or public) is the
+    transport, git does the auth, and skillgram verifies what arrived and links it.
+    """
+
+    def setUp(self):
+        super().setUp()
+        if not shutil.which("git"):
+            self.skipTest("git is not on PATH")
+        self.origin = self.tmp / "skills-origin"
+        make_skill(self.origin, "infra-ops", "deploy")
+        make_skill(self.origin, "design-ui", "archify")
+        self.git("init", "-q")
+        self.git("add", "-A")
+        self.git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "hub")
+
+    def git(self, *args) -> None:
+        subprocess.run(["git", "-C", str(self.origin), *args], check=True, capture_output=True)
+
+    def test_clone_brings_the_skills_and_links_them(self):
+        (self.home / ".claude" / "skills").mkdir(parents=True)
+        dest = self.tmp / "hub"
+        res = skillgram.clone_hub(str(self.origin), dest)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["transport"], "clone")
+        self.assertEqual(res["skills"], 2)
+        self.assertEqual(sorted(skillgram.Hub(dest).skills()), ["archify", "deploy"])
+        self.assertTrue(skillgram.is_link(self.home / ".claude" / "skills" / "deploy"))
+        self.assertTrue((dest / ".git").is_dir())
+
+    def test_no_sync_leaves_the_harnesses_alone(self):
+        (self.home / ".claude" / "skills").mkdir(parents=True)
+        res = skillgram.clone_hub(str(self.origin), self.tmp / "hub", sync_after=False)
+        self.assertTrue(res["ok"], res)
+        self.assertIsNone(res["synced"])
+        self.assertFalse(os.path.lexists(self.home / ".claude" / "skills" / "deploy"))
+
+    def test_second_run_pulls_instead_of_cloning(self):
+        dest = self.tmp / "hub"
+        skillgram.clone_hub(str(self.origin), dest, sync_after=False)
+        make_skill(self.origin, "infra-ops", "another")
+        self.git("add", "-A")
+        self.git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "more")
+        res = skillgram.clone_hub(str(self.origin), dest, sync_after=False)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["transport"], "pull")
+        self.assertEqual(res["skills"], 3)
+
+    def test_another_origin_is_refused_unless_forced(self):
+        dest = self.tmp / "hub"
+        skillgram.clone_hub(str(self.origin), dest, sync_after=False)
+        other = self.tmp / "other-origin"
+        make_skill(other, "infra-ops", "x")
+        subprocess.run(["git", "-C", str(other), "init", "-q"], check=True, capture_output=True)
+        res = skillgram.clone_hub(str(other), dest, sync_after=False)
+        self.assertFalse(res["ok"])
+        self.assertIn("already tracks", res["error"])
+
+    def test_a_non_empty_folder_needs_force_and_never_overwrites(self):
+        dest = self.tmp / "hub"
+        make_skill(dest, "infra-ops", "deploy", "my own version")
+        res = skillgram.clone_hub(str(self.origin), dest, sync_after=False)
+        self.assertFalse(res["ok"])
+        self.assertIn("--force", res["error"])
+
+        forced = skillgram.clone_hub(str(self.origin), dest, force=True, sync_after=False)
+        self.assertTrue(forced["ok"], forced)
+        self.assertEqual(forced["transport"], "merge")
+        self.assertEqual(forced["conflicts"], ["infra-ops/deploy"])
+        self.assertEqual(forced["added"], ["design-ui/archify"])
+        kept = (dest / "infra-ops" / "deploy" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("my own version", kept, "a skill that already exists wins")
+
+    def test_a_repo_without_skills_says_so(self):
+        empty = self.tmp / "not-a-hub"
+        empty.mkdir()
+        (empty / "README.md").write_text("nothing\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(empty), "init", "-q"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(empty), "add", "-A"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(empty), "-c", "user.email=t@t", "-c", "user.name=t",
+                        "commit", "-q", "-m", "x"], check=True, capture_output=True)
+        res = skillgram.clone_hub(str(empty), self.tmp / "hub", sync_after=False)
+        self.assertFalse(res["ok"])
+        self.assertIn("is this a skill hub", res["error"])
+
+    def test_the_cli_prints_a_summary(self):
+        dest = self.tmp / "hub"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = skillgram.main(["clone", str(self.origin), "--hub", str(dest), "--no-sync"])
+        self.assertEqual(code, 0)
+        text = buf.getvalue()
+        self.assertIn("2 skills", text)
+        self.assertIn("not linked", text)
 
 
 class TestMcpThroughTheRealCli(HomeCase):

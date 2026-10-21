@@ -11,7 +11,7 @@ Keep it that way unless there is a hard reason not to.
 
 - One JSON line per operation on stdout for machine commands; human output only
   for `doctor`, `onboard`, `status`, `init`, `use`, `unuse`, `project-status`, `seed`,
-  `align` and `policy`.
+  `align`, `policy` and `clone`.
 - Exit `0` healthy, `1` drift/error, `2` bad invocation.
 - Never copy skill content into an agent folder. Links only (junctions on Windows,
   symlinks elsewhere).

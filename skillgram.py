@@ -78,7 +78,7 @@ import threading
 import time
 from pathlib import Path
 
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 
 # ---------------------------------------------------------------------------
 # Rutas por defecto
@@ -1794,13 +1794,77 @@ def _align_rows(hub: Hub, project: Path, names: set) -> list:
     return rows
 
 
-def align(hub: Hub, project: Path, apply: bool = False, known: dict | None = None) -> dict:
+def _state_of(dest: Path, hub_root: Path) -> dict:
+    """What a harness reads under `dest`: the hub's link, a forked copy, or nothing."""
+    if is_link(dest):
+        tgt = link_target(dest)
+        if tgt and _under(Path(tgt), hub_root):
+            return {"state": "link"}
+        return {"state": "link-elsewhere"}
+    if dest.is_dir() and (dest / "SKILL.md").is_file():
+        return {"state": "native", "hash": skill_hash(dest)}
+    return {"state": "absent"}
+
+
+def align_hashes(hub: Hub, project: Path, known: dict | None = None) -> list:
+    """Which content each harness reads of every skill in the set.
+
+    A link cannot diverge: it points at the hub, so it *is* the hub's hash. What can
+    diverge is a forked copy (a real directory) or a stale manifest entry (the hub
+    moved after `use`). This is the report that says which one you are looking at.
+    """
+    scope = project_scope(hub, project, known)
+    home_dirs = {}
+    for agent_dir in hub.agents():
+        app = agent_dir.parent.name.lstrip(".")
+        home_dirs.setdefault(app, agent_dir)
+        home_dirs.setdefault(normalize_harness(app), agent_dir)
+    rows = []
+    for item in scope["skills"]:
+        name, tipo = item["name"], item["tipo"]
+        src = Path(item["src"])
+        hub_hash = skill_hash(src)
+        entry = _read_manifest(project)["skills"].get(name) or {}
+        recorded = entry.get("hash") or ""
+        harnesses = {}
+        for harness in detect_harnesses():
+            if not harness["instalado"]:
+                continue
+            app = harness["app"]
+            found = None
+            for rel in PROJECT_SKILL_DIRS.get(app) or ():
+                state = _state_of(project / rel / name, hub.root)
+                if state["state"] != "absent":
+                    found = {**state, "where": rel}
+                    break
+            if found is None:
+                agent_dir = home_dirs.get(app) or home_dirs.get(normalize_harness(app))
+                if agent_dir is not None:
+                    state = _state_of(agent_dir / name, hub.root)
+                    if state["state"] != "absent":
+                        found = {**state, "where": "home"}
+            harnesses[app] = found or {"state": "absent"}
+        rows.append({
+            "skill": name,
+            "category": tipo,
+            "hub": hub_hash,
+            "manifest": recorded,
+            # the hub moved after this project took the skill: `use` re-seals it
+            "stale": bool(recorded) and recorded != hub_hash,
+            "promoted_at": entry.get("promoted_at", ""),
+            "harnesses": harnesses,
+        })
+    return rows
+
+
+def align(hub: Hub, project: Path, apply: bool = False, known: dict | None = None,
+          hashes: bool = False) -> dict:
     """What each harness actually sees of one project's set -- from the disk.
 
     Read-only by default. `--apply` only *adds* the links the project needs: an
     `extra` is reported, never removed, and a native directory is never touched (the
     project set is the only source; a harness that sees more is a violation to report,
-    not a suggestion to propagate).
+    not a suggestion to propagate). `hashes=True` adds the content each harness reads.
     """
     scope = project_scope(hub, project, known)
     if not scope["skills"]:
@@ -1816,7 +1880,7 @@ def align(hub: Hub, project: Path, apply: bool = False, known: dict | None = Non
             applied = todo
             rows = _align_rows(hub, project, names)
     unfixable = [r["harness"] for r in rows if r["missing"]]
-    return {
+    result = {
         "ok": not unfixable,
         "op": "align",
         "project": str(project),
@@ -1826,6 +1890,94 @@ def align(hub: Hub, project: Path, apply: bool = False, known: dict | None = Non
         "unfixable": unfixable,
         "rows": rows,
     }
+    if hashes:
+        result["hashes"] = align_hashes(hub, project, known)
+    return result
+
+
+def clone_hub(url: str, target: Path | None = None, ref: str | None = None,
+              force: bool = False, sync_after: bool = True) -> dict:
+    """Bring a hub from a git repo (private or public) into this machine.
+
+    git does the transport, and therefore the auth for a private repo; skillgram
+    verifies what arrived and -- unless `--no-sync` -- links it into the harnesses so
+    the skills are usable without a second command. Nothing is ever overwritten: a
+    non-empty target is merged only with `--force`, and the skills it already has win.
+    """
+    dest = Path(target).expanduser() if target else default_hub()
+    out = {"ok": False, "op": "clone", "url": url, "hub": str(dest), "ref": ref or ""}
+    git = _which("git")
+    if not git:
+        out["error"] = "git is not on PATH, so a hub cannot be cloned here"
+        return out
+    branch = ["--branch", ref] if ref else []
+    is_repo = (dest / ".git").is_dir()
+    non_empty = dest.exists() and any(dest.iterdir()) if dest.exists() else False
+
+    if is_repo:
+        code, text = run_cli([git, "-C", str(dest), "remote", "get-url", "origin"], timeout=60)
+        origin = text.strip()
+        if origin and origin != url:
+            if not force:
+                out["error"] = (f"{dest} already tracks {origin}; pass --force to re-point it, "
+                                "or clone into another --hub")
+                return out
+            run_cli([git, "-C", str(dest), "remote", "set-url", "origin", url], timeout=60)
+        code, text = run_cli([git, "-C", str(dest), "pull", "--ff-only"] + (["origin", ref] if ref else []),
+                             timeout=600)
+        out["transport"] = "pull"
+        if code != 0:
+            out["error"] = f"git pull failed: {_first_lines(text, 3)}"
+            return out
+    elif non_empty:
+        if not force:
+            out["error"] = (f"{dest} is not empty and is not a git repo; pass --force to merge into it "
+                            "(skills it already has are never overwritten)")
+            return out
+        with tempfile.TemporaryDirectory() as tmp:
+            staging = Path(tmp) / "hub"
+            code, text = run_cli([git, "clone", "--depth", "1", *branch, url, str(staging)], timeout=600)
+            if code != 0:
+                out["error"] = f"git clone failed: {_first_lines(text, 3)}"
+                return out
+            added, conflicts = [], []
+            for name, tipo in Hub(staging).skills().items():
+                src = staging / tipo / name
+                to = dest / tipo / name
+                if to.exists():
+                    conflicts.append(f"{tipo}/{name}")
+                    continue
+                to.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(src, to)
+                added.append(f"{tipo}/{name}")
+            out.update({"transport": "merge", "added": added, "conflicts": conflicts})
+    else:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        # shallow: a hub is content, not history; `git log` is still there for the audit
+        code, text = run_cli([git, "clone", "--depth", "1", *branch, url, str(dest)], timeout=600)
+        out["transport"] = "clone"
+        if code != 0:
+            out["error"] = f"git clone failed: {_first_lines(text, 3)}"
+            return out
+
+    hub = Hub(dest)
+    skills = hub.skills()
+    head_code, head = run_cli([git, "-C", str(dest), "rev-parse", "--short", "HEAD"], timeout=60)
+    origin_code, origin = run_cli([git, "-C", str(dest), "remote", "get-url", "origin"], timeout=60)
+    out.update({
+        "skills": len(skills),
+        "categories": len(hub.tipos()),
+        "commit": head.strip() if head_code == 0 else "",
+        "origin": origin.strip() if origin_code == 0 else "",
+        "synced": None,
+    })
+    if not skills:
+        out["error"] = "the repository has no <category>/<skill>/SKILL.md: is this a skill hub?"
+        return out
+    out["ok"] = True
+    if sync_after:
+        out["synced"] = sync(hub, quiet=True)
+    return out
 
 
 def prune_global_links(hub: Hub, apply: bool = False) -> dict:
@@ -4559,12 +4711,22 @@ def build_parser() -> argparse.ArgumentParser:
                              help="what each harness actually sees of this project, and what it lacks")
     p_align.add_argument("--project")
     p_align.add_argument("--apply", action="store_true", help="link the missing ones (never removes, never touches natives)")
+    p_align.add_argument("--hashes", action="store_true",
+                         help="also show which content each harness reads (link, forked copy, stale manifest)")
 
     p_policy = sub.add_parser("policy", parents=[common],
                               help="the gate: show the effective policy, or check a project against it")
     p_policy.add_argument("action", nargs="?", choices=["show", "check"], default="show")
     p_policy.add_argument("--project")
     p_policy.add_argument("--policy", help="organization policy: a path, or url#ref of a git repo")
+
+    p_clone = sub.add_parser("clone", parents=[common],
+                             help="bring a hub in from a git repo (private or public) and link it")
+    p_clone.add_argument("url", help="git URL of the hub repository")
+    p_clone.add_argument("--ref", help="branch or tag to take (default: the repo default)")
+    p_clone.add_argument("--force", action="store_true",
+                         help="merge into a non-empty folder, or re-point an existing clone (never overwrites a skill)")
+    p_clone.add_argument("--no-sync", action="store_true", help="do not link the harnesses afterwards")
     return ap
 
 
@@ -4843,7 +5005,7 @@ def dispatch(args, hub: Hub) -> dict | int:
 
     if cmd == "align":
         proj = resolve_project(args.project)
-        result = align(hub, Path(proj["path"]), apply=args.apply)
+        result = align(hub, Path(proj["path"]), apply=args.apply, hashes=args.hashes)
         result["resolucion"] = proj["source"]
         return result
 
@@ -4857,6 +5019,10 @@ def dispatch(args, hub: Hub) -> dict | int:
         if proj:
             result["resolucion"] = proj["source"]
         return result
+
+    if cmd == "clone":
+        return clone_hub(args.url, Path(args.hub), ref=args.ref, force=args.force,
+                         sync_after=not args.no_sync)
 
     return {"ok": False, "op": cmd, "error": f"unknown command: {cmd}"}  # argparse ya valida
 
@@ -4988,6 +5154,28 @@ def human_output(args, result: dict) -> str | None:
             lines.append(f"error: {error}")
         return "\n".join(lines)
 
+    if cmd == "clone":
+        lines = [
+            f"hub: {result['hub']}  ({result.get('transport', 'clone')}, "
+            f"{result.get('skills', 0)} skills in {result.get('categories', 0)} categories)",
+            f"origin: {result.get('origin') or result['url']}"
+            + (f"  ref: {result['ref']}" if result.get("ref") else "")
+            + (f"  commit: {result['commit']}" if result.get("commit") else ""),
+        ]
+        if result.get("added"):
+            lines.append(f"added (merge): {len(result['added'])}")
+        if result.get("conflicts"):
+            lines.append(f"kept yours (never overwritten): {', '.join(result['conflicts'])}")
+        synced = result.get("synced") or {}
+        if synced:
+            lines.append(f"linked into the harnesses: +{synced.get('creados', 0)} created, "
+                         f"~{synced.get('arreglados', 0)} fixed, -{synced.get('removed', 0)} removed")
+        elif result.get("ok"):
+            lines.append("not linked (--no-sync): run `skillgram sync` when you want them visible")
+        if result.get("error"):
+            lines.append(f"error: {result['error']}")
+        return "\n".join(lines)
+
     if cmd == "policy" and result.get("action") == "check":
         lines = [
             f"project: {result['project']}  scope: {result['scope']}",
@@ -5036,6 +5224,24 @@ def human_output(args, result: dict) -> str | None:
         if result["unfixable"]:
             lines.append(f"still missing (no project dir to link into): {', '.join(result['unfixable'])}"
                          " -- `skillgram sync` exposes the whole hub instead")
+        if result.get("hashes"):
+            lines.append("")
+            lines.append(f"{'skill':<28}{'hub':<18}{'manifest':<18}state")
+            for row in result["hashes"]:
+                state = "stale: the hub moved, `use` re-seals it" if row["stale"] else "ok"
+                if not row["manifest"]:
+                    state = "not recorded"
+                lines.append(f"{row['skill'][:27]:<28}{row['hub']:<18}{row['manifest'] or '-':<18}{state}")
+                for harness, seen in sorted(row["harnesses"].items()):
+                    if seen["state"] == "link":
+                        continue
+                    if seen["state"] == "native":
+                        lines.append(f"   {harness:<14} forked copy {seen['hash']} ({seen['where']})"
+                                     " -- `diff` it, `adopt` lifts it into the hub")
+                    elif seen["state"] == "link-elsewhere":
+                        lines.append(f"   {harness:<14} links somewhere else ({seen['where']})")
+                    else:
+                        lines.append(f"   {harness:<14} absent")
         return "\n".join(lines)
 
     if cmd == "project-status":

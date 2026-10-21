@@ -1,6 +1,25 @@
 # Changelog
 
-## 1.7.0 (unreleased in PyPI) — `policy`: the gate, and it is not advice
+## 1.8.0 (unreleased in PyPI) — `clone` between machines, and `align --hashes`
+
+`export`/`import` moved a hub as a tarball; the README called git under the hub "the
+workaround". It is the actual answer, so it now has a command with the safety rails.
+
+- **`skillgram clone <url> [--hub PATH] [--ref BRANCH|TAG] [--force] [--no-sync]`** — git
+  does the transport (and the auth for a private repo); skillgram verifies what arrived
+  and, unless `--no-sync`, links the harnesses so the skills are usable immediately. It
+  reports `skills`, `categories`, `commit` and `origin`.
+- **Nothing is overwritten.** Same origin → `pull --ff-only`; another origin → refused
+  unless `--force`; a non-empty folder that is not a repo → refused unless `--force`, and
+  then it merges without clobbering (`conflicts` names what it kept).
+- **`align --hashes`** answers "which version does each harness read": per skill, the hub
+  hash, the hash the project recorded at `use` time (`stale` when the hub moved), and per
+  harness `link` / `native <hash>` / `absent`. A link cannot diverge — it *is* the hub's
+  content — so the only real divergence is a forked copy or a stale manifest, and both
+  are now visible in one table.
+- 10 tests (7 for clone against a real git repo: clone, pull, other origin, forced merge
+  that keeps yours, a repo that is not a hub, the CLI; 3 for the hash table), 168 total.
+
 
 `docs/POLICY.md` described two commands. `align` shipped in 1.6.0; this is the other half,
 with the enforcement the document promised and none of the things it refused.
