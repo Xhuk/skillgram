@@ -538,13 +538,13 @@ A module may only import from the layers below it. `HOME` is read through
 time. `lint --baseline` accepts known debt and fails only on new failures, which is what
 makes the quality gate usable on a corpus that already has history.
 
-## Companion tool — edgePass
+## Companion tool — EdgePass
 
-`skillgram` and **[edgePass](https://xhuk.github.io/edgePass/)** ([GitHub](https://github.com/Xhuk/edgePass) · `winget install Xhuk.EdgePass`) are standalone tools designed to complement each other on an AI coding workstation:
+`skillgram` and **[EdgePass](https://xhuk.github.io/edgePass/)** ([GitHub](https://github.com/Xhuk/edgePass) · `winget install Xhuk.EdgePass`) are standalone tools designed to complement each other on an AI coding workstation:
 
 - **`skillgram`** governs *what your agents know*: one `SKILL.md` library, contract & admission gate, isolated `git worktree` trials, project manifests, and the zero-token `_vault`.
-- **`edgePass`** governs *what your agents can access & run*: a desktop notch widget & control plane that injects OpenBao secrets without plaintext exposure, manages MCP servers/tunnels, and supervises local GitHub Actions runners.
-- **Connected via `skillgram daemon`**: when both are installed, `edgePass` talks to `skillgram daemon` over its JSON-line pipe (`{"op": "status"}`, `{"op": "sync"}`) to show live skill drift on a desktop LED and sync all harnesses in one click.
+- **`EdgePass`** governs *what your agents can access & run*: a desktop notch widget & control plane that injects OpenBao secrets without plaintext exposure, manages MCP servers/tunnels, and supervises local GitHub Actions runners.
+- **Connected via `skillgram daemon`**: when both are installed, `EdgePass` talks to `skillgram daemon` over its JSON-line pipe (`{"op": "status"}`, `{"op": "sync"}`) to show live skill drift on a desktop LED and sync all harnesses in one click.
 
 ## License
 

@@ -281,7 +281,7 @@ made 1.4.0's "declared usage" unfillable.
 - **`install` → MCP registration now has a test against a real spawn** (the documented
   `SKILLGRAM_MCP_CLI_<HARNESS>` switch behind a stub): probe -> add -> probe, and mutating it to
   trust the exit code fails the test. **`daemon` has one too** (JSON line in, JSON line out, `quit`
-  exits 0) — it is how edgePass talks to skillgram and it had none.
+  exits 0) — it is how EdgePass talks to skillgram and it had none.
 
 116 stdlib tests; 4 junction tests skip on POSIX.
 

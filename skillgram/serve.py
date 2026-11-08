@@ -241,7 +241,7 @@ class Watcher:
 def single_instance(name: str = "skillgram_watch") -> bool:
     """True si este proceso es el único vigilante.
 
-    Importa porque el vigilante es un **hijo** del proceso que lo lanza: si edgePass se cierra
+    Importa porque el vigilante es un **hijo** del proceso que lo lanza: si EdgePass se cierra
     de golpe, en Windows el hijo sobrevive. Sin candado, el siguiente arranque levanta un
     segundo vigilante y quedan dos sincronizando (inofensivo, pero invisible).
     """

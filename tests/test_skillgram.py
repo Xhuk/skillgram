@@ -2615,7 +2615,7 @@ class TestMcpThroughTheRealCli(HomeCase):
 
 
 class TestDaemon(HomeCase):
-    """The daemon is how edgePass talks to skillgram (one JSON line in, one out) and
+    """The daemon is how EdgePass talks to skillgram (one JSON line in, one out) and
     it had no test: it owns its own stdin/stdout, so it is exercised as a process.
     """
 

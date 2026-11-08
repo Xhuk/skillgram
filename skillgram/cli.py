@@ -273,7 +273,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_sync.add_argument("--seeds-only", action="store_true", help="link only seeds.always globally into ~/.<agent>/skills")
     p_watch = sub.add_parser("watch", parents=[common], help="watch the hub and re-sync on change")
     p_watch.add_argument("--interval", type=float, default=5.0)
-    p_daemon = sub.add_parser("daemon", parents=[common], help="JSON-line server for edgePass")
+    p_daemon = sub.add_parser("daemon", parents=[common], help="JSON-line server for EdgePass")
     p_daemon.add_argument("--interval", type=float, default=5.0)
     p_daemon.add_argument("--watch", action="store_true", help="start watching immediately")
     p_auto = sub.add_parser("install-autostart", parents=[common], help="scheduled task at logon")

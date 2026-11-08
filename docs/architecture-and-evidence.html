@@ -145,7 +145,7 @@
       <a href="architecture-and-evidence.html"><b>Architecture &amp; Evidence</b></a>
       <a href="diagrams/operativity.html">Three Plates</a>
       <a href="diagrams/skillgram-install.html">Install Flow</a>
-      <a href="https://xhuk.github.io/edgePass/">edgePass</a>
+      <a href="https://xhuk.github.io/edgePass/">EdgePass</a>
       <a href="https://github.com/Xhuk/skillgram">GitHub</a>
     </div>
   </nav>
@@ -397,11 +397,11 @@ routing collisions: new-branch-and-pr (score 10), receiving-code-review (score 1
     </tbody>
   </table>
 
-  <h2>5. Companion Ecosystem: <code>skillgram</code> + <code>edgePass</code></h2>
+  <h2>5. Companion Ecosystem: <code>skillgram</code> + <code>EdgePass</code></h2>
   <p>
     Managing an AI coding workstation has two halves: <b>what your agents know</b> (skills &amp; instructions)
     and <b>what your agents can execute and access</b> (secrets, MCP daemons, tunnels, and local CI runners).
-    We built <code>skillgram</code> and <a href="https://xhuk.github.io/edgePass/"><b>edgePass</b></a> so each
+    We built <code>skillgram</code> and <a href="https://xhuk.github.io/edgePass/"><b>EdgePass</b></a> so each
     lives cleanly on its own&mdash;zero hard dependency on the other&mdash;while snapping together automatically when both
     are present on the same machine:
   </p>
@@ -412,19 +412,19 @@ routing collisions: new-branch-and-pr (score 10), receiving-code-review (score 1
       <span>CLI + MCP server for <code>SKILL.md</code> governance: hub deduplication, contract &amp; security gate, worktree trials, stack-affinity ranking, and zero-token vaulting.</span>
     </div>
     <div class="card">
-      <b>Standalone: <a href="https://xhuk.github.io/edgePass/"><code>edgePass</code></a></b>
+      <b>Standalone: <a href="https://xhuk.github.io/edgePass/"><code>EdgePass</code></a></b>
       <span>Native desktop notch widget &amp; control plane that injects OpenBao secrets into processes without exposing plaintext tokens in agent configs or logs, plus live LEDs for MCP servers and local GitHub Actions runners.</span>
     </div>
     <div class="card">
       <b>Connected via <code>skillgram daemon</code></b>
-      <span><code>edgePass</code> speaks to <code>skillgram daemon</code> over a local JSON-line pipe (<code>{"op": "status"}</code>, <code>{"op": "sync"}</code>) to surface real-time skill drift on a desktop LED and sync all harnesses in one click.</span>
+      <span><code>EdgePass</code> speaks to <code>skillgram daemon</code> over a local JSON-line pipe (<code>{"op": "status"}</code>, <code>{"op": "sync"}</code>) to surface real-time skill drift on a desktop LED and sync all harnesses in one click.</span>
     </div>
   </div>
 
   <div class="callout">
     <b>Discover the other half of the stack:</b> Visit
     <a href="https://xhuk.github.io/edgePass/"><b>xhuk.github.io/edgePass</b></a> or the
-    <a href="https://github.com/Xhuk/edgePass">edgePass GitHub repository</a>
+    <a href="https://github.com/Xhuk/edgePass">EdgePass GitHub repository</a>
     (installable via <code>winget install Xhuk.EdgePass</code>) to see how secret injection, MCP health,
     and local runner supervision pair with <code>skillgram</code>.
   </div>
@@ -462,7 +462,7 @@ python skillgram.py sync --seeds-only</code></pre>
     <span>MIT License</span>
     <a href="index.html">Home</a>
     <a href="diagrams/operativity.html">Operativity Plates</a>
-    <a href="https://xhuk.github.io/edgePass/">edgePass (Companion Tool)</a>
+    <a href="https://xhuk.github.io/edgePass/">EdgePass (Companion Tool)</a>
     <a href="https://github.com/Xhuk/skillgram">GitHub Repository</a>
     <a href="https://github.com/Xhuk/skillgram/issues/new/choose">Submit Field Telemetry</a>
   </footer>

@@ -55,7 +55,7 @@ def plan(hub: Hub, agents: list[Path] | None = None, deep: bool = False,
     """Calcula el drift sin tocar nada.
 
     Rápido por defecto: **un `scandir` por agente** y `readlink` sólo en los links que
-    sobran. Así `status` responde en milisegundos y el LED de edgePass puede sondearlo
+    sobran. Así `status` responde en milisegundos y el LED de EdgePass puede sondearlo
     cada 5 s sin castigar la máquina (con el chequeo completo tardaba 3.3 s porque hacía
     21 mil `readlink`).
 
