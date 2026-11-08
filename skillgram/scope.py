@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from .drift import _remove_junction, make_links
+from .features import SOURCE_FEATURE, resolve_all
 from .govern import (
     _pattern_hits,
     load_policy,
@@ -33,7 +34,9 @@ from .hub import (
     normalize_harness,
     project_config_name,
     project_dir,
+    record_skill_usage,
     skill_hash,
+    unvault_skill,
 )
 
 PROJECT_ENV = "SKILLS_PROJECT"
@@ -101,7 +104,12 @@ def init_project(name: str | None = None, path: str | None = None, force: bool =
 
 
 def promote(hub: Hub, names: list[str], project: Path) -> dict:
-    """Promueve skills del hub al proyecto (junction + manifest). Idempotente."""
+    """Promueve skills del hub al proyecto (junction + manifest). Idempotente.
+
+    Each name is resolved through the features registry first: `use impecable`
+    promotes `impeccable` and says so in `aliased`, because the founder's spelling
+    of a skill is a decision the tool is not going to argue with.
+    """
     known = hub.skills()
     manifest = _read_manifest(project)
     links_dir = project_dir(project) / PROJECT_SKILLS
@@ -112,15 +120,24 @@ def promote(hub: Hub, names: list[str], project: Path) -> dict:
     unknown: list[str] = []
     occupied: list[str] = []
     denied: list[dict] = []
+    aliased: list[dict] = []
+    unvaulted: list[str] = []
     batch: list[tuple[Path, Path]] = []
     levels = policy_for(project)
 
-    for raw in names:
-        name = raw.strip()
+    for hit in resolve_all(hub, [str(n).strip() for n in names if str(n).strip()]):
+        name = hit["skill"] if hit["known"] else hit["requested"]
         tipo = known.get(name)
+        if not tipo and unvault_skill(hub, name) is not None:
+            known = hub.skills()
+            tipo = known.get(name)
+            if tipo:
+                unvaulted.append(name)
         if not tipo:
             unknown.append(name)
             continue
+        if hit["source"] == SOURCE_FEATURE:
+            aliased.append({"requested": hit["requested"], "skill": name})
         verdict = policy_verdict(levels, tipo, name)
         if not verdict["allowed"]:
             denied.append({"skill": name, "category": tipo, "rule": verdict["rule"]})
@@ -146,6 +163,7 @@ def promote(hub: Hub, names: list[str], project: Path) -> dict:
         created = [n for n in created if os.path.lexists(links_dir / n)]
 
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+    proj_name = project_config_name(project) or manifest.get("project_name") or _project_name(project)
     for name in created + already:
         tipo = known[name]
         manifest["skills"][name] = {
@@ -154,7 +172,7 @@ def promote(hub: Hub, names: list[str], project: Path) -> dict:
             "hash": skill_hash(hub.root / tipo / name),
             "promoted_at": stamp,
         }
-    manifest["project_name"] = project_config_name(project) or manifest.get("project_name") or _project_name(project)
+    manifest["project_name"] = proj_name
     _write_manifest(project, manifest)
 
     return {
@@ -167,6 +185,8 @@ def promote(hub: Hub, names: list[str], project: Path) -> dict:
         "unknown": unknown,
         "ocupadas_sin_enlace": occupied,
         "denied": denied,
+        "aliased": aliased,
+        "unvaulted": unvaulted,
         "manifest": str(project_dir(project) / PROJECT_MANIFEST),
     }
 
@@ -174,6 +194,7 @@ def promote(hub: Hub, names: list[str], project: Path) -> dict:
 def unpromote(project: Path, names: list[str]) -> dict:
     """Saca skills del scope del proyecto (borra el enlace y la entrada)."""
     manifest = _read_manifest(project)
+    proj_name = project_config_name(project) or manifest.get("project_name") or _project_name(project)
     links_dir = project_dir(project) / PROJECT_SKILLS
     removed: list[str] = []
     absent: list[str] = []
@@ -185,7 +206,9 @@ def unpromote(project: Path, names: list[str]) -> dict:
             removed.append(name)
         else:
             absent.append(name)
-        manifest["skills"].pop(name, None)
+        entry = manifest["skills"].pop(name, None)
+        if isinstance(entry, dict) and entry.get("source"):
+            record_skill_usage(Path(entry["source"]), project_name=proj_name, unuse=True)
     _write_manifest(project, manifest)
     return {
         "ok": True,
@@ -567,7 +590,11 @@ def prune_global_links(hub: Hub, apply: bool = False) -> dict:
     if not apply:
         total = 0
         for agent_dir in hub.agents():
-            for entry in agent_dir.iterdir():
+            try:
+                entries = list(agent_dir.iterdir())
+            except OSError:
+                continue
+            for entry in entries:
                 if is_link(entry):
                     tgt = link_target(entry)
                     if tgt and _under(Path(tgt), hub.root):
@@ -575,7 +602,11 @@ def prune_global_links(hub: Hub, apply: bool = False) -> dict:
         return {"harness": "*", "removed": [], "pendientes": total, "applied": False}
     removed = 0
     for agent_dir in hub.agents():
-        for entry in list(agent_dir.iterdir()):
+        try:
+            entries = list(agent_dir.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
             if not is_link(entry):
                 continue
             tgt = link_target(entry)
@@ -680,7 +711,8 @@ def protocol_block(hub: Hub) -> str:
         "   `skillgram_list`. Each row says how often and which harness used it.",
         "2. Before proposing or writing a skill, ask: `skillgram missing \"<capability>\"`",
         "   (or the MCP tool `skillgram_missing`).",
-        "3. `found: true` -> use the skill. Read `<hub>/<category>/<skill>/SKILL.md` or invoke it by name.",
+        "3. `found: true` -> use the skill. Read `<hub>/<category>/<skill>/SKILL.md` (or call the MCP",
+        "   tool `skillgram_read` to read it on demand even when parked in `_vault`) or invoke it by name.",
         "4. After using one, say so: `skillgram touch <skill> --by <your harness>` (or the MCP tool",
         "   `skillgram_touch`). That is the only usage signal skillgram has, and it is what the",
         "   next harness will read.",
@@ -693,8 +725,9 @@ def protocol_block(hub: Hub) -> str:
         "7. Authoring a skill: `skillgram new <name> --category <c>` then `skillgram lint <name>",
         "   --contract`. The contract is `docs/SKILL-CONTRACT.md`; `lint` is the gate.",
         "8. A skill that comes from a URL or another repo is imported with `skillgram import`",
-        "   (an export made by skillgram) or `skillgram adopt` (a local folder): never a copy into",
-        "   a `skills/` folder.",
+        "   (an export made by skillgram), tested in a worktree with `skillgram try <url>`, or",
+        "   adopted with `skillgram adopt` (`skillgram adopt --project .` for local repo installs):",
+        "   never a copy into a `skills/` folder.",
         "",
         PROTOCOL_END,
     ])

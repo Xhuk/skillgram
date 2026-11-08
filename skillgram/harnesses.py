@@ -43,7 +43,11 @@ def doctor(hub: Hub) -> dict:
         links = dead = natives = 0
         collisions = []
         present = set()
-        for entry in sorted(agent_dir.iterdir()):
+        try:
+            entries = sorted(agent_dir.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
             if is_link(entry):
                 tgt = link_target(entry)
                 if tgt and Path(tgt).exists() and _under(Path(tgt), hub.root):

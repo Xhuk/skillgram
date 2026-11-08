@@ -11,16 +11,21 @@ import tempfile
 import time
 from pathlib import Path
 
+from .features import feature_hits
 from .govern import read_seeds
 from .hub import (
     DEFAULT_CATEGORY,
+    VAULT_DIR,
     Hub,
+    _project_name,
     _read_manifest,
     _write_manifest,
     home_dir,
     re_findall_words,
+    record_skill_usage,
     skill_hash,
     skill_meta,
+    vault_skills,
     write_skill_meta,
 )
 
@@ -48,8 +53,12 @@ def index_build(hub: Hub, path: Path | None = None) -> dict:
     try:
         conn.execute("DELETE FROM skills")
         rows = 0
-        for name, tipo in sorted(hub.skills().items()):
-            d = hub.root / tipo / name
+        active = hub.skills()
+        all_skills = [(n, t, hub.root / t / n) for n, t in sorted(active.items())]
+        for n, t in sorted(vault_skills(hub).items()):
+            if n not in active:
+                all_skills.append((n, t, hub.root / VAULT_DIR / t / n))
+        for name, tipo, d in all_skills:
             try:
                 text = (d / "SKILL.md").read_text(encoding="utf-8", errors="replace")
             except OSError:
@@ -71,8 +80,24 @@ def index_build(hub: Hub, path: Path | None = None) -> dict:
     return {"ok": True, "op": "index", "skills": rows, "path": str(path or index_path())}
 
 
-def index_search(text: str, limit: int = 10, path: Path | None = None) -> dict:
-    """Busqueda FTS5 con fallback a tokens si el indice no existe."""
+def index_search(text: str, limit: int = 10, path: Path | None = None,
+                 hub: Hub | None = None) -> dict:
+    """Busqueda FTS5 con fallback a tokens si el indice no existe.
+
+    A registered feature name is prepended before the FTS rows when a hub is
+    given: `search impecable` has to find `impeccable` even though the word is not
+    in any SKILL.md, and the index is about what the skills say, not about what
+    this founder calls them.
+    """
+    rows, seen = [], set()
+    if hub is not None:
+        for hit in feature_hits(hub, text):
+            if not hit["known"] or hit["skill"] in seen:
+                continue
+            seen.add(hit["skill"])
+            rows.append({"skill": hit["skill"], "tipo": hit["category"],
+                         "description": hit["note"] or f"feature: {hit['request']}",
+                         "rank": -1.0, "feature": True})
     conn = _index_conn(path)
     try:
         q = " OR ".join(f'"{t}"' for t in re_findall_words(text) if len(t) > 2) or '""'
@@ -80,15 +105,18 @@ def index_search(text: str, limit: int = 10, path: Path | None = None) -> dict:
             cur = conn.execute(
                 "SELECT name, tipo, description, bm25(skills) AS rank FROM skills "
                 "WHERE skills MATCH ? ORDER BY rank LIMIT ?", (q, limit))
-            rows = [{"skill": r[0], "tipo": r[1], "description": r[2][:160], "rank": round(r[3], 3)}
-                    for r in cur.fetchall()]
+            for r in cur.fetchall():
+                if r[0] in seen:
+                    continue
+                seen.add(r[0])
+                rows.append({"skill": r[0], "tipo": r[1], "description": r[2][:160], "rank": round(r[3], 3)})
         except Exception:
-            rows = []
+            pass
         total = conn.execute("SELECT v FROM meta WHERE k='skills'").fetchone()
         built = conn.execute("SELECT v FROM meta WHERE k='built_at'").fetchone()
     finally:
         conn.close()
-    return {"ok": True, "op": "search", "query": text, "results": rows,
+    return {"ok": True, "op": "search", "query": text, "results": rows[:limit],
             "indexed": int(total[0]) if total else 0, "built_at": built[0] if built else None}
 
 
@@ -98,9 +126,11 @@ RETIRED_DIR = "_retired"
 RETIRED_LOG = "_retired.json"
 
 
-def touch_usage(project: Path, names: list, by: str = "agent") -> dict:
-    """Marca uso en el manifest del proyecto (last_used / use_count)."""
+def touch_usage(project: Path, names: list, by: str = "agent",
+                stack_tags: list[str] | None = None) -> dict:
+    """Marca uso en el manifest del proyecto (last_used / use_count) y en el hub (SKILLMETA.json)."""
     manifest = _read_manifest(project)
+    proj_name = manifest.get("project_name") or _project_name(project)
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S")
     touched, absent = [], []
     for name in names:
@@ -115,6 +145,13 @@ def touch_usage(project: Path, names: list, by: str = "agent") -> dict:
         # which skills this project has been living on.
         tallies = entry.setdefault("by_harness", {})
         tallies[by] = int(tallies.get(by, 0)) + 1
+        if entry.get("source"):
+            record_skill_usage(
+                Path(entry["source"]),
+                project_name=proj_name,
+                stack_tags=stack_tags,
+                by=by,
+            )
         touched.append(name)
     _write_manifest(project, manifest)
     out = {"ok": bool(touched), "op": "touch", "by": by, "touched": touched}
@@ -122,6 +159,90 @@ def touch_usage(project: Path, names: list, by: str = "agent") -> dict:
         out["not_in_scope"] = absent
         out["hint"] = "run `skillgram use <skill>` first: usage is declared per project"
     return out
+
+
+def read_skill(hub: Hub, name: str, project: Path | None = None,
+               by: str = "agent", stack_tags: list[str] | None = None) -> dict:
+    """Read a skill's SKILL.md on demand (active or vaulted) and record organic usage."""
+    known = hub.skills()
+    vaulted = False
+    if name in known:
+        tipo = known[name]
+        skill_dir = hub.root / tipo / name
+    else:
+        vmap = vault_skills(hub)
+        if name not in vmap:
+            return {"ok": False, "op": "read", "skill": name, "error": f"unknown skill: {name}"}
+        tipo = vmap[name]
+        skill_dir = hub.root / VAULT_DIR / tipo / name
+        vaulted = True
+    md = skill_dir / "SKILL.md"
+    try:
+        content = md.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return {"ok": False, "op": "read", "skill": name, "error": str(exc)}
+    aux = []
+    try:
+        for f in sorted(skill_dir.rglob("*")):
+            if f.is_file() and f.name not in ("SKILL.md", "SKILLMETA.json") and "__pycache__" not in f.parts:
+                aux.append(f.relative_to(skill_dir).as_posix())
+    except OSError:
+        pass
+    proj_name = _project_name(project) if project is not None else None
+    usage = record_skill_usage(skill_dir, project_name=proj_name, stack_tags=stack_tags, by=by)
+    return {
+        "ok": True,
+        "op": "read",
+        "skill": name,
+        "category": tipo,
+        "vaulted": vaulted,
+        "path": str(skill_dir),
+        "tokens_est": max(1, len(content) // 4),
+        "aux_files": aux[:50],
+        "usage": usage,
+        "content": content,
+    }
+
+
+def vault_unused(hub: Hub, apply: bool = False) -> dict:
+    """Move 0-hit non-seed skills into `<hub>/_vault/<category>/<name>` so they cost 0 links and 0 context."""
+    known = hub.skills()
+    seeded = set(read_seeds()["always"])
+    candidates = []
+    kept = []
+    for name, tipo in sorted(known.items()):
+        skill_dir = hub.root / tipo / name
+        meta = skill_meta(skill_dir)
+        source_kind = (meta.get("source") or {}).get("kind", "")
+        usage = meta.get("usage") or {}
+        hits = int(usage.get("total_hits", 0) or 0)
+        projects = usage.get("projects") or []
+        if name in seeded or source_kind == "bundled" or hits > 0 or projects:
+            kept.append({"skill": name, "category": tipo, "hits": hits, "seed": name in seeded})
+            continue
+        candidates.append({"skill": name, "category": tipo, "path": str(skill_dir)})
+    moved, failed = [], []
+    if apply:
+        for item in candidates:
+            src = Path(item["path"])
+            dest = hub.root / VAULT_DIR / item["category"] / item["skill"]
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                if dest.exists():
+                    shutil.rmtree(dest, ignore_errors=True)
+                shutil.move(str(src), str(dest))
+                moved.append(item["skill"])
+            except OSError as exc:
+                failed.append(f"{item['skill']}: {exc}")
+    return {
+        "ok": not failed,
+        "op": "vault",
+        "applied": apply,
+        "candidates": len(candidates),
+        "kept_active": len(kept),
+        "vaulted": moved if apply else [c["skill"] for c in candidates],
+        "failed": failed,
+    }
 
 
 def list_skills(hub: Hub, category: str | None = None, project: Path | None = None,
@@ -147,6 +268,7 @@ def list_skills(hub: Hub, category: str | None = None, project: Path | None = No
         if used == "unused" and count:
             continue
         source = meta.get("source") or {}
+        hub_usage = meta.get("usage") or {}
         rows.append({
             "skill": name,
             "category": tipo,
@@ -154,9 +276,12 @@ def list_skills(hub: Hub, category: str | None = None, project: Path | None = No
             "source": source.get("kind", ""),
             "seed": name in seeded,
             "use_count": count,
-            "last_used": entry.get("last_used", ""),
+            "total_hits": int(hub_usage.get("total_hits", 0) or 0),
+            "projects": list(hub_usage.get("projects") or []),
+            "stack_hits": dict(hub_usage.get("stack_hits") or {}),
+            "last_used": entry.get("last_used", "") or hub_usage.get("last_used", ""),
             # who used it, so another harness can pick up where the last one left off
-            "last_used_by": entry.get("last_used_by", ""),
+            "last_used_by": entry.get("last_used_by", "") or hub_usage.get("last_used_by", ""),
             "by_harness": dict(entry.get("by_harness") or {}),
         })
     total = len(rows)
@@ -371,7 +496,7 @@ def _frontmatter(text: str) -> dict:
 
     It is not a YAML parser, on purpose: the contract needs `name` and `description`, and a
     real parser would drag a dependency into a stdlib-only tool. What it must not do is
-    mistake `description: >-` for a two-character description â€” that turns the gate into a
+    mistake `description: >-` for a two-character description — that turns the gate into a
     liar for every file written the readable way.
     """
     text = text.lstrip("\ufeff")  # a BOM from a Windows editor is not "no frontmatter"

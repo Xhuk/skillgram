@@ -3,10 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>skillgram — how it operates (three plates)</title>
+<title>skillgram &mdash; how it operates (three plates)</title>
 <meta name="description" content="Three editorial plates on how skillgram operates: the loop that keeps a library and its agents in agreement, what mount writes inside a repo, and how a candidate earns its place.">
 <link rel="canonical" href="https://xhuk.github.io/skillgram/diagrams/operativity.html">
-<link rel="icon" href="../logo.png">
+<link rel="icon" type="image/x-icon" href="../assets/favicon.ico" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/x-icon" href="../assets/favicon-daylight.ico" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32x32.png" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-daylight-32x32.png" media="(prefers-color-scheme: light)">
+<link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png">
+<meta property="og:image" content="https://xhuk.github.io/skillgram/assets/og-image.png">
 <style>
   :root {
     --bg: #fbfaf8; --fg: #1b1b1a; --muted: #6b6a66; --line: #e2e0da;
@@ -122,19 +127,19 @@
         </marker>
       </defs>
 
-      <!-- 01 · the store -->
-      <text class="tag" x="16" y="22">01 · store</text>
+      <!-- 01 &middot; the store -->
+      <text class="tag" x="16" y="22">01 &middot; store</text>
       <rect class="box-hub" x="16" y="34" width="196" height="150" rx="8"/>
       <text class="lbl" x="32" y="58">~/.agents/skills</text>
       <text class="sub" x="32" y="80">&lt;category&gt;/&lt;skill&gt;/</text>
-      <text class="sub" x="32" y="98">SKILL.md · the only copy</text>
-      <text class="sub" x="32" y="116">SKILLMETA.json · hash</text>
+      <text class="sub" x="32" y="98">SKILL.md &middot; the only copy</text>
+      <text class="sub" x="32" y="116">SKILLMETA.json &middot; hash</text>
       <line class="rule" x1="32" y1="130" x2="196" y2="130"/>
       <text class="sub" x="32" y="150">one file, every harness</text>
       <text class="sub" x="32" y="168">reads it as its own</text>
 
-      <!-- 02 · the views -->
-      <text class="tag" x="300" y="22">02 · views</text>
+      <!-- 02 &middot; the views -->
+      <text class="tag" x="300" y="22">02 &middot; views</text>
       <rect class="box" x="300" y="34" width="200" height="34" rx="6"/>
       <text class="lbl" x="314" y="56">Reasonix</text>
       <text class="sub" x="488" y="56" text-anchor="end">.reasonix/skills</text>
@@ -151,32 +156,32 @@
       <path class="flow" d="M 212 132 C 256 132, 258 139, 298 139" marker-end="url(#a)"/>
       <text class="tag" x="222" y="200">links</text>
 
-      <!-- 03 · the set -->
-      <text class="tag" x="600" y="22">03 · the set</text>
+      <!-- 03 &middot; the set -->
+      <text class="tag" x="600" y="22">03 &middot; the set</text>
       <rect class="box" x="600" y="34" width="204" height="150" rx="8"/>
       <text class="lbl" x="616" y="58">&lt;repo&gt;/.agents</text>
-      <text class="sub" x="616" y="80">config.json · project name</text>
-      <text class="sub" x="616" y="98">skills.json · the set,</text>
+      <text class="sub" x="616" y="80">config.json &middot; project name</text>
+      <text class="sub" x="616" y="98">skills.json &middot; the set,</text>
       <text class="sub" x="616" y="114">with hashes</text>
       <text class="sub" x="616" y="132">skills/&lt;name&gt; → link</text>
       <line class="rule" x1="616" y1="146" x2="788" y2="146"/>
-      <text class="sub" x="616" y="166">committed · the memory</text>
+      <text class="sub" x="616" y="166">committed &middot; the memory</text>
 
       <path class="live" d="M 500 139 C 552 139, 556 108, 598 108" marker-end="url(#b)"/>
       <text class="tag on" x="506" y="126">mount</text>
 
-      <!-- 04 · what it remembers -->
-      <text class="tag" x="600" y="228">04 · the record</text>
+      <!-- 04 &middot; what it remembers -->
+      <text class="tag" x="600" y="228">04 &middot; the record</text>
       <rect class="box" x="600" y="240" width="204" height="76" rx="8"/>
-      <text class="sub" x="616" y="262">use_count · last_used</text>
-      <text class="sub" x="616" y="280">last_used_by · by_harness</text>
+      <text class="sub" x="616" y="262">use_count &middot; last_used</text>
+      <text class="sub" x="616" y="280">last_used_by &middot; by_harness</text>
       <text class="sub" x="616" y="302">declared, never observed</text>
       <path class="live" d="M 702 184 L 702 238" marker-end="url(#b)"/>
       <text class="tag on" x="710" y="214">touch</text>
       <text class="sub" x="600" y="336">the next session reads this file</text>
 
-      <!-- 05 · taste -->
-      <text class="tag" x="16" y="228">05 · taste</text>
+      <!-- 05 &middot; taste -->
+      <text class="tag" x="16" y="228">05 &middot; taste</text>
       <rect class="box" x="16" y="240" width="196" height="76" rx="8"/>
       <text class="lbl" x="32" y="262">skillgram seed</text>
       <text class="sub" x="32" y="282">qring-anti-slop</text>
@@ -215,18 +220,18 @@
 ├── AGENTS.md                          <span class="hit">+ protocol block</span>
 ├── .gitignore                         <span class="hit">+ links block</span>
 ├── .agents/
-│   ├── config.json                    <span class="dim">tracked · project name</span>
-│   ├── skills.json                    <span class="dim">tracked · the set + hashes</span>
-│   └── skills/deploy → hub            <span class="dim">link · ignored</span>
-├── .claude/skills/deploy → hub        <span class="dim">link · ignored</span>
-├── .codex/skills/deploy → hub         <span class="dim">link · ignored</span>
-├── .cursor/skills/deploy → hub        <span class="dim">link · ignored</span>
-└── … one dir per installed harness</pre>
+│   ├── config.json                    <span class="dim">tracked &middot; project name</span>
+│   ├── skills.json                    <span class="dim">tracked &middot; the set + hashes</span>
+│   └── skills/deploy → hub            <span class="dim">link &middot; ignored</span>
+├── .claude/skills/deploy → hub        <span class="dim">link &middot; ignored</span>
+├── .codex/skills/deploy → hub         <span class="dim">link &middot; ignored</span>
+├── .cursor/skills/deploy → hub        <span class="dim">link &middot; ignored</span>
+└── &hellip; one dir per installed harness</pre>
 
         <dl class="notes">
           <dt><span class="swatch in"></span>Tracked</dt>
           <dd>The two JSON files are the project's memory: what it has, with the hash that detects
-          drift. Commit them — that is what the next harness reads.</dd>
+          drift. Commit them &mdash; that is what the next harness reads.</dd>
 
           <dt><span class="swatch out"></span>Ignored</dt>
           <dd>A delimited block in <code>.gitignore</code> covers every directory the mount writes,
@@ -238,7 +243,7 @@
           agent, in any harness, to read the record before choosing and to declare what it used.</dd>
 
           <dt>Reversible</dt>
-          <dd><code>skillgram unuse &lt;skill&gt;…</code> drops links and manifest entries; nothing
+          <dd><code>skillgram unuse &lt;skill&gt;&hellip;</code> drops links and manifest entries; nothing
           in the hub is touched.</dd>
         </dl>
       </div>
@@ -263,16 +268,16 @@
             <tr class="keep"><td>skill <b>name</b></td><td class="n">3</td></tr>
             <tr><td>skill <b>category</b></td><td class="n">2</td></tr>
             <tr><td>body of <code>SKILL.md</code></td><td class="n">1</td></tr>
-            <tr class="drop"><td>below <b>2</b> — dropped</td><td class="n">—</td></tr>
+            <tr class="drop"><td>below <b>2</b> &mdash; dropped</td><td class="n">&mdash;</td></tr>
           </table>
 
           <table class="score" style="margin-top:26px">
             <tr><th>Real repo: go + vite + react</th><th class="n">before</th><th class="n">after</th></tr>
             <tr class="keep"><td>a React skill by name</td><td class="n">tie</td><td class="n">1st</td></tr>
-            <tr><td>a body-only mention</td><td class="n">tie</td><td class="n">—</td></tr>
-            <tr class="drop"><td>godmode <span class="sub">(“go” as a fragment)</span></td><td class="n">listed</td><td class="n">gone</td></tr>
+            <tr><td>a body-only mention</td><td class="n">tie</td><td class="n">&mdash;</td></tr>
+            <tr class="drop"><td>godmode <span class="sub">(&ldquo;go&rdquo; as a fragment)</span></td><td class="n">listed</td><td class="n">gone</td></tr>
             <tr class="drop"><td>nodejs-keccak256 <span class="sub">(for React)</span></td><td class="n">listed</td><td class="n">gone</td></tr>
-            <tr><td>a seeded skill</td><td class="n">—</td><td class="n">first</td></tr>
+            <tr><td>a seeded skill</td><td class="n">&mdash;</td><td class="n">first</td></tr>
           </table>
         </div>
 

@@ -16,10 +16,10 @@ from pathlib import Path
 from .drift import status, sync
 from .harnesses import caller_identity
 from .hub import VERSION, Hub, log
-from .lifecycle import index_search, list_skills, touch_usage
+from .lifecycle import index_search, list_skills, read_skill, touch_usage
 from .llm import llm_config
-from .scope import project_status, promote, resolve_project
-from .select import missing, propose_skill
+from .scope import mount_project, project_status, promote, resolve_project
+from .select import missing, propose_skill, repo_signals
 
 MCP_TOOLS = [
     {"name": "skillgram_search",
@@ -57,25 +57,41 @@ MCP_TOOLS = [
                                                      "used": {"type": "string", "enum": ["used", "unused"]},
                                                      "project": {"type": "string"},
                                                      "limit": {"type": "integer"}}}},
+    {"name": "skillgram_read",
+     "description": "Read a skill's SKILL.md on demand from the hub (or vault) without needing a global link, and record usage.",
+     "inputSchema": {"type": "object", "properties": {"skill": {"type": "string"},
+                                                     "project": {"type": "string"},
+                                                     "by": {"type": "string"}},
+                     "required": ["skill"]}},
 ]
 
 
 def mcp_call(hub: Hub, name: str, args: dict) -> dict:
     """Despacho de una tool MCP. Devuelve el resultado como dict."""
     if name == "skillgram_search":
-        return index_search(str(args.get("query", "")), int(args.get("limit", 10) or 10))
+        return index_search(str(args.get("query", "")), int(args.get("limit", 10) or 10), hub=hub)
     if name == "skillgram_missing":
         return missing(hub, str(args.get("query", "")))
     if name == "skillgram_use":
         proj = resolve_project(args.get("project"))
-        result = promote(hub, [str(s) for s in args.get("skills", [])], Path(proj["path"]))
+        proj_path = Path(proj["path"])
+        skills_arg = [str(s) for s in args.get("skills", [])]
+        result = promote(hub, skills_arg, proj_path)
         # the MCP server runs inside the harness, so the process tree names it: the
         # record says `claude`/`codex`/`reasonix`, not a constant
         by = str(args.get("by") or caller_identity("mcp"))
-        result["uso"] = touch_usage(Path(proj["path"]),
-                                    [str(s) for s in args.get("skills", [])], by=by).get("touched", [])
+        tags = repo_signals(proj_path)["tags"]
+        result["uso"] = touch_usage(proj_path, result["created"] + result["already_present"],
+                                    by=by, stack_tags=tags).get("touched", [])
+        result["mounted"] = mount_project(hub, proj_path, apply=True).get("harnesses", [])
         result["by"] = by
         return result
+    if name == "skillgram_read":
+        proj = resolve_project(args.get("project"))
+        proj_path = Path(proj["path"])
+        by = str(args.get("by") or caller_identity("mcp"))
+        tags = repo_signals(proj_path)["tags"]
+        return read_skill(hub, str(args.get("skill", "")), project=proj_path, by=by, stack_tags=tags)
     if name == "skillgram_status":
         proj = resolve_project(args.get("project"))
         return {"hub": status(hub), "project": project_status(hub, Path(proj["path"]))}
@@ -85,8 +101,10 @@ def mcp_call(hub: Hub, name: str, args: dict) -> dict:
                              llm_config(), apply=bool(args.get("apply")))
     if name == "skillgram_touch":
         proj = resolve_project(args.get("project"))
-        return touch_usage(Path(proj["path"]), [str(s) for s in args.get("skills", [])],
-                           by=str(args.get("by") or caller_identity("mcp")))
+        proj_path = Path(proj["path"])
+        tags = repo_signals(proj_path)["tags"]
+        return touch_usage(proj_path, [str(s) for s in args.get("skills", [])],
+                           by=str(args.get("by") or caller_identity("mcp")), stack_tags=tags)
     if name == "skillgram_list":
         proj = resolve_project(args.get("project")) if args.get("project") else None
         return list_skills(hub, category=args.get("category"),
@@ -194,11 +212,11 @@ class Watcher:
 
     def _loop(self) -> None:
         # La base se toma ANTES del primer sync y **no** se re-lee despues: si se releyera,
-        # una skill que aparezca *durante* ese sync quedarÃ­a dentro de la base sin haberse
-        # enlazado, y el vigilante no volverÃ­a a mirarla hasta el siguiente cambio no
+        # una skill que aparezca *durante* ese sync quedaría dentro de la base sin haberse
+        # enlazado, y el vigilante no volvería a mirarla hasta el siguiente cambio no
         # relacionado (pasaba de verdad: una skill se quedaba missing links).
         # Con la base de antes, el primer sondeo ve el cambio y sincroniza otra vez;
-        # repetir un sync es idempotente, asÃ­ que no cuesta nada.
+        # repetir un sync es idempotente, así que no cuesta nada.
         previous = hub_fingerprint(self.hub)
         self.last_sync = sync(self.hub, quiet=self.quiet)
         while not self._stop.is_set():
@@ -206,7 +224,7 @@ class Watcher:
                 break
             current = hub_fingerprint(self.hub)
             if os.environ.get("SKILLGRAM_DEBUG") or os.environ.get("SKILLS_SYNC_DEBUG"):
-                log(f"debug: huella {len(previous)} -> {len(current)} Â· iguales={current == previous}")
+                log(f"debug: huella {len(previous)} -> {len(current)} · iguales={current == previous}")
             if current != previous:
                 changed = [n for n, _, _ in current if n not in {x[0] for x in previous}]
                 gone = [n for n, _, _ in previous if n not in {x[0] for x in current}]
@@ -221,7 +239,7 @@ class Watcher:
 
 
 def single_instance(name: str = "skillgram_watch") -> bool:
-    """True si este proceso es el Ãºnico vigilante.
+    """True si este proceso es el único vigilante.
 
     Importa porque el vigilante es un **hijo** del proceso que lo lanza: si edgePass se cierra
     de golpe, en Windows el hijo sobrevive. Sin candado, el siguiente arranque levanta un

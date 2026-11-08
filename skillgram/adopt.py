@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import time
+from contextlib import suppress
 from pathlib import Path
 
 from .drift import make_links
@@ -15,6 +16,7 @@ from .hub import (
     DEFAULT_CATEGORY,
     Hub,
     _skill_summary,
+    dir_bytes,
     home_dir,
     is_link,
     skill_hash,
@@ -34,7 +36,11 @@ def harness_inventory(hub: Hub, only: str | None = None) -> list:
             continue
         natives = []
         links = 0
-        for entry in sorted(agent_dir.iterdir()):
+        try:
+            entries = sorted(agent_dir.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
             if is_link(entry):
                 links += 1
                 continue
@@ -44,6 +50,7 @@ def harness_inventory(hub: Hub, only: str | None = None) -> list:
                         "name": entry.name,
                         "path": str(entry),
                         "hash": skill_hash(entry),
+                        "bytes": dir_bytes(entry),
                         "in_hub": entry.name in known,
                         "summary": _skill_summary(entry),
                     }
@@ -178,7 +185,7 @@ def llm_refine_plan(hub: Hub, plan: dict, cfg: dict) -> dict:
 
 def apply_onboard(hub: Hub, plan: dict) -> dict:
     """Importa al hub: copia, verifica hash y recien ahi reemplaza por link."""
-    imported, skipped, failed = [], [], []
+    imported, deduped, skipped, failed = [], [], [], []
     for action in plan["actions"]:
         if action["action"] != "import":
             skipped.append(f"{action['harness']}/{action['skill']} ({action['action']})")
@@ -199,7 +206,19 @@ def apply_onboard(hub: Hub, plan: dict) -> dict:
             failed.append(f"{action['skill']}: hash mismatch after copying")
             continue
         imported.append({"skill": action["skill"], "harness": action["harness"], "to": str(dest), "harness_dir": str(src.parent)})
-    return {"imported": imported, "skipped": skipped, "failed": failed}
+    known = hub.skills()
+    for action in plan["actions"]:
+        if action["action"] == "import":
+            continue
+        tipo = known.get(action["skill"])
+        if not tipo:
+            continue
+        hub_dest = hub.root / tipo / action["skill"]
+        if hub_dest.is_dir() and skill_hash(hub_dest) == action.get("hash"):
+            src = Path(action["from"])
+            deduped.append({"skill": action["skill"], "harness": action["harness"],
+                            "to": str(hub_dest), "harness_dir": str(src.parent)})
+    return {"imported": imported, "deduped": deduped, "skipped": skipped, "failed": failed}
 
 
 def replace_native_with_link(hub: Hub, imported: list, quarantine: Path) -> dict:
@@ -516,29 +535,48 @@ def apply_precedence(hub: Hub, apply: bool = False, only: str | None = None) -> 
     }
 
 
-def adopt_skill(hub: Hub, path: Path, quarantine_root: Path | None = None) -> dict:
-    """Adopta una skill nativa: copia al hub, verifica hash, deja link, original a quarantine."""
+def adopt_skill(hub: Hub, path: Path, quarantine_root: Path | None = None,
+                keep_quarantine: bool = True) -> dict:
+    """Adopta una skill nativa: copia al hub (o deduplica si ya existe con el mismo hash),
+    verifica hash, deja link, y envia la copia original a quarantine (salvo keep_quarantine=False)."""
     src = Path(path)
     if not (src / "SKILL.md").is_file():
         return {"ok": False, "op": "adopt", "path": str(src), "error": "not a skill (missing SKILL.md)"}
     name = src.name
-    tipo = _heuristic_category(name, hub.tipos())
-    dest = hub.root / tipo / name
-    if dest.exists():
-        return {"ok": False, "op": "adopt", "path": str(src), "error": f"already exists: {dest}"}
+    known = hub.skills()
     original_hash = skill_hash(src)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        shutil.copytree(src, dest)
-    except OSError as exc:
-        return {"ok": False, "op": "adopt", "path": str(src), "error": str(exc)}
-    if skill_hash(dest) != original_hash:
-        shutil.rmtree(dest, ignore_errors=True)
-        return {"ok": False, "op": "adopt", "path": str(src), "error": "hash mismatch after copying"}
+    deduped = False
+    if name in known:
+        tipo = known[name]
+        dest = hub.root / tipo / name
+        if skill_hash(dest) != original_hash:
+            return {"ok": False, "op": "adopt", "path": str(src), "error": f"already exists: {dest}"}
+        deduped = True
+    else:
+        tipo = _heuristic_category(name, hub.tipos())
+        dest = hub.root / tipo / name
+        if dest.exists():
+            if skill_hash(dest) != original_hash:
+                return {"ok": False, "op": "adopt", "path": str(src), "error": f"already exists: {dest}"}
+            deduped = True
+        else:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                shutil.copytree(src, dest)
+            except OSError as exc:
+                return {"ok": False, "op": "adopt", "path": str(src), "error": str(exc)}
+            if skill_hash(dest) != original_hash:
+                shutil.rmtree(dest, ignore_errors=True)
+                return {"ok": False, "op": "adopt", "path": str(src), "error": "hash mismatch after copying"}
     qroot = quarantine_root or (home_dir() / ".agents" / "skillgram-quarantine")
-    qdir = qroot / src.parent.name
-    qdir.mkdir(parents=True, exist_ok=True)
+    harness_name = (
+        src.parent.parent.name.lstrip(".")
+        if src.parent.name == "skills" and src.parent.parent.name
+        else src.parent.name.lstrip(".")
+    )
+    qdir = qroot / (harness_name or "skills")
     target = qdir / name
+    qdir.mkdir(parents=True, exist_ok=True)
     try:
         if target.exists():
             shutil.rmtree(target, ignore_errors=True)
@@ -546,24 +584,137 @@ def adopt_skill(hub: Hub, path: Path, quarantine_root: Path | None = None) -> di
     except OSError as exc:
         return {"ok": False, "op": "adopt", "path": str(src), "imported": str(dest), "error": f"quarantine: {exc}"}
     make_links([(src, dest)])
+    linked_ok = os.path.lexists(src)
+    if not linked_ok:
+        try:
+            shutil.move(str(target), str(src))
+        except OSError:
+            pass
+    elif not keep_quarantine:
+        shutil.rmtree(target, ignore_errors=True)
+        with suppress(OSError):
+            qdir.rmdir()
+            qroot.rmdir()
     return {
-        "ok": os.path.lexists(src),
+        "ok": linked_ok,
         "op": "adopt",
         "skill": name,
         "tipo": tipo,
         "hub": str(dest),
-        "quarantine": str(target),
+        "deduped": deduped,
+        "quarantine": str(target) if (keep_quarantine and linked_ok) else None,
         "link": str(src),
     }
 
 
-def adopt_natives(hub: Hub, harnesses: list | None = None) -> dict:
+def adopt_natives(hub: Hub, harnesses: list | None = None,
+                  keep_quarantine: bool = True) -> dict:
     """Adopta todas las skills native que encuentre (auto-adopcion del watch)."""
     done, failed = [], []
     for row in harness_inventory(hub):
         if harnesses and row["app"] not in harnesses:
             continue
         for nat in row["native"]:
-            res = adopt_skill(hub, Path(nat["path"]))
+            res = adopt_skill(hub, Path(nat["path"]), keep_quarantine=keep_quarantine)
             (done if res.get("ok") else failed).append(res)
     return {"ok": not failed, "op": "adopt-all", "adoptadas": done, "failed": failed}
+
+
+def compact_space(hub: Hub, apply: bool = False, purge_quarantine: bool = False,
+                  quarantine_root: Path | None = None) -> dict:
+    """Audit and deduplicate physical skill copies across harnesses.
+
+    Identical copies (same content hash as the hub) are replaced with junctions to the
+    hub so only one copy lives on disk. With `purge_quarantine=True`, verified duplicate
+    copies are deleted instead of moved to quarantine, and existing quarantine copies
+    are purged.
+    """
+    qroot = quarantine_root or (home_dir() / ".agents" / "skillgram-quarantine")
+    hub_bytes = dir_bytes(hub.root)
+    quarantine_bytes = dir_bytes(qroot)
+    known = hub.skills()
+    inv = harness_inventory(hub)
+
+    dedupable, divergent, unique_natives = [], [], []
+    native_bytes = 0
+    for row in inv:
+        for nat in row["native"]:
+            size = int(nat.get("bytes", 0))
+            native_bytes += size
+            name = nat["name"]
+            if name in known:
+                hub_dest = hub.root / known[name] / name
+                hub_h = skill_hash(hub_dest)
+                if nat["hash"] == hub_h:
+                    dedupable.append({
+                        "harness": row["app"],
+                        "skill": name,
+                        "path": nat["path"],
+                        "to": str(hub_dest),
+                        "bytes": size,
+                        "hash": nat["hash"],
+                    })
+                else:
+                    divergent.append({
+                        "harness": row["app"],
+                        "skill": name,
+                        "path": nat["path"],
+                        "to": str(hub_dest),
+                        "bytes": size,
+                        "hash": nat["hash"],
+                        "hub_hash": hub_h,
+                    })
+            else:
+                unique_natives.append({
+                    "harness": row["app"],
+                    "skill": name,
+                    "path": nat["path"],
+                    "bytes": size,
+                    "hash": nat["hash"],
+                })
+
+    dedupable_bytes = sum(d["bytes"] for d in dedupable)
+    reclaimable_bytes = dedupable_bytes + quarantine_bytes
+    linked, failed = [], []
+    freed_bytes = 0
+    quarantine_purged = False
+
+    if apply:
+        for item in dedupable:
+            res = adopt_skill(
+                hub,
+                Path(item["path"]),
+                quarantine_root=qroot,
+                keep_quarantine=not purge_quarantine,
+            )
+            if res.get("ok"):
+                linked.append(res["link"])
+                if purge_quarantine:
+                    freed_bytes += item["bytes"]
+            else:
+                failed.append(f"{item['harness']}/{item['skill']}: {res.get('error', 'failed')}")
+        if purge_quarantine and qroot.is_dir():
+            shutil.rmtree(qroot, ignore_errors=True)
+            if not qroot.exists():
+                quarantine_purged = True
+                freed_bytes += quarantine_bytes
+
+    return {
+        "ok": not failed,
+        "op": "compact",
+        "hub": str(hub.root),
+        "applied": apply,
+        "purge_quarantine": purge_quarantine,
+        "hub_bytes": hub_bytes,
+        "native_bytes": native_bytes,
+        "dedupable_bytes": dedupable_bytes,
+        "quarantine_bytes": quarantine_bytes,
+        "reclaimable_bytes": reclaimable_bytes,
+        "freed_bytes": freed_bytes,
+        "quarantine_purged": quarantine_purged,
+        "dedupable": dedupable,
+        "divergent": divergent,
+        "unique_natives": unique_natives,
+        "linked": linked,
+        "failed": failed,
+    }

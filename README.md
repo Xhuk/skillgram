@@ -1,15 +1,19 @@
-﻿<p align="center"><img src="docs/logo.png" alt="skillgram" width="120"></p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-readme-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/banner-readme-daylight.png">
+    <img src="docs/assets/banner-readme-daylight.png" alt="skillgram — Skill governance for AI coding agents" width="100%">
+  </picture>
+</p>
 
 <p align="center">
   <a href="https://github.com/Xhuk/skillgram/actions/workflows/ci.yml"><img src="https://github.com/Xhuk/skillgram/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://pypi.org/project/skillgram/"><img src="https://img.shields.io/pypi/v/skillgram?color=b5523a" alt="PyPI"></a>
-  <a href="https://github.com/Xhuk/skillgram/releases/latest"><img src="https://img.shields.io/github/v/release/Xhuk/skillgram?color=b5523a" alt="Release"></a>
-  <a href="https://xhuk.github.io/skillgram/"><img src="https://img.shields.io/badge/site-xhuk.github.io%2Fskillgram-b5523a" alt="Site"></a>
+  <a href="https://pypi.org/project/skillgram/"><img src="https://img.shields.io/pypi/v/skillgram?color=10b981" alt="PyPI"></a>
+  <a href="https://github.com/Xhuk/skillgram/releases/latest"><img src="https://img.shields.io/github/v/release/Xhuk/skillgram?color=10b981" alt="Release"></a>
+  <a href="https://xhuk.github.io/skillgram/"><img src="https://img.shields.io/badge/site-xhuk.github.io%2Fskillgram-10b981" alt="Site"></a>
   <img src="https://img.shields.io/badge/python-3.9%2B-3776ab" alt="Python 3.9+">
   <img src="https://img.shields.io/badge/deps-none-success" alt="No dependencies">
 </p>
-
-<h1 align="center">skillgram</h1>
 
 <p align="center"><strong>Skill governance for AI agents:</strong> one library, a contract that gates what enters
 it, and every coding agent reading the same thing.<br>
@@ -31,23 +35,23 @@ Links are the mechanism. Governance is the product.
 %APPDATA%/Reasonix/skills/<skill>              -> junction to the hub
 ```
 
-**Two skills ship with it** â€” the tool is the plumbing plus the governance, and the two things
+**Two skills ship with it** — the tool is the plumbing plus the governance, and the two things
 an agent needs to work with it: [`skillgram/skills/skillgram-report`](skillgram/skills/skillgram-report/SKILL.md)
 (how to report a bug or a gap) and
 [`skillgram/skills/anti-slop-guardrails`](skillgram/skills/anti-slop-guardrails/SKILL.md) (how to
 de-slop a codebase so the cleanup sticks: review checklist, behaviour-preserving refactor, CI
 gates with a baseline). They travel inside the package and `install` seeds them into the hub, so
-a fresh machine is never an empty library â€” and a hub that already has them is left alone.
+a fresh machine is never an empty library — and a hub that already has them is left alone.
 
 ### The five levers
 
 | Lever | Command | What it answers |
 |---|---|---|
-| **Contract** | `lint --contract`, `new` | does this skill state a trigger, rules, decisions, steps and an output â€” or is it a paragraph? |
+| **Contract** | `lint --contract`, `new` | does this skill state a trigger, rules, decisions, steps and an output — or is it a paragraph? |
 | **Provenance** | `SKILLMETA.json` | who wrote it, when, from where, and the hash that makes `update` possible |
-| **Declared usage** | `touch`, `list --used` / `--unused` | which skills were actually used in this project, and which never were â€” `by_harness` says from which agent, so changing harness does not lose the record |
-| **Taste** | `seed` / `seed --never` | the skills that are always recommended (`qring-anti-slop`) and the ones that never are â€” a hub-level decision, not a score |
-| **Policy** | `policy check`, `--policy gitâ€¦` | what may be granted or exposed at all, at three levels, with the hash an audit can quote |
+| **Declared usage** | `touch`, `list --used` / `--unused` | which skills were actually used in this project, and which never were — `by_harness` says from which agent, so changing harness does not lose the record |
+| **Taste** | `seed` / `seed --never` | the skills that are always recommended (`qring-anti-slop`) and the ones that never are — a hub-level decision, not a score |
+| **Policy** | `policy check`, `--policy git…` | what may be granted or exposed at all, at three levels, with the hash an audit can quote |
 
 The honest limit, stated once: skillgram cannot see what an agent *reads*. Usage is what the agent
 declares (`skillgram touch` / the `skillgram_touch` MCP tool), and everything built on it says so.
@@ -56,10 +60,10 @@ which is how a project keeps its memory when you switch harness.
 
 ### What this is, in other words
 
-If you were looking for a way to **manage skills for AI agents** â€” an **admin layer** over the
+If you were looking for a way to **manage skills for AI agents** — an **admin layer** over the
 skills your coding agents load, a **skill registry / skill library / skill manager**, or a way
 to share one set of `SKILL.md` files between Claude Code, Codex, Cursor and the rest without
-copying anything â€” this is that tool. Per-project scope, an MCP server so the agent can ask the
+copying anything — this is that tool. Per-project scope, an MCP server so the agent can ask the
 hub, links instead of copies, and no LLM in the loop unless you ask for one.
 
 It is **not** a prompt manager, a memory store, or an embeddings index. Those are different
@@ -69,7 +73,7 @@ things and there are good tools for them (Engram, for one, is credited below).
 
 Linking by hand once is easy; keeping fifty agents in sync is not. Agents re-create their own
 copies, rename folders, and a new hub skill never shows up by itself. skillgram turns that
-into one idempotent command â€” and with `watch`, into no command at all.
+into one idempotent command — and with `watch`, into no command at all.
 
 ## Install
 
@@ -126,14 +130,14 @@ never overwritten. `doctor` tells you how many native skills each harness has be
 anything.
 
 For harnesses that scan a single level, each agent also gets one link per category
-(`skills/<category>` â†’ `hub/<category>`), so the hub stays browsable.
+(`skills/<category>` → `hub/<category>`), so the hub stays browsable.
 
 `precedence` is the cooperative alternative: it declares the hub **first** in each harness'
 own config (`skills.paths` for Reasonix, `skills.external_dirs` for Hermes) with a
 `*.skillgram-bak-<timestamp>` backup next to the file. Delete skillgram and every harness keeps
 exactly what it had.
 
-The hard-mount model â€” one junction for the whole `skills/` directory â€” is deliberately *not*
+The hard-mount model — one junction for the whole `skills/` directory — is deliberately *not*
 the default: a `rimraf skills` or a harness uninstall would wipe the library of every agent.
 
 ### Project scope (engram-style)
@@ -154,8 +158,8 @@ skillgram project-status              # healthy / stale / broken / missing links
 <project>/.agents/skills.json   manifest: category, source, hash, promoted_at, last_used
 ```
 
-Resolution order, same as engram: `--project` â†’ `SKILLGRAM_PROJECT` â†’ nearest
-`.agents/config.json` up to the git root â†’ cwd. If it cannot resolve, it says so; it never
+Resolution order, same as engram: `--project` → `SKILLGRAM_PROJECT` → nearest
+`.agents/config.json` up to the git root → cwd. If it cannot resolve, it says so; it never
 guesses. `mount` writes the project's set into every harness layout that reads project-level
 skills (`.agents/skills`, `.claude/skills`, `.codex/skills`, `.cursor/skills`,
 `.gemini/skills`, `.github/skills`, `.hermes/skills`, `.kiro`, `.qwen`, `.aider`,
@@ -165,12 +169,12 @@ skills (`.agents/skills`, `.claude/skills`, `.codex/skills`, `.cursor/skills`,
 `mount` also keeps git out of it: the links are directories to git, so a `git add -A` would
 commit every mounted skill as a copy. It maintains a delimited block in `.gitignore` with the
 directories it writes (one per harness plus `.agents/skills/`), while `.agents/config.json` and
-`.agents/skills.json` stay tracked â€” that is the memory the next harness reads. Idempotent, and
+`.agents/skills.json` stay tracked — that is the memory the next harness reads. Idempotent, and
 reversible by deleting the block.
 
 `project-status` also flags a skill that lives both in the hub **and** as a real copy inside
 the project, and lists `seeds_missing`: the skills you marked as always-recommended that this
-project does not have yet. That is a recommendation, not drift â€” it never fails the command.
+project does not have yet. That is a recommendation, not drift — it never fails the command.
 
 ### The MCP server: let the agent ask
 
@@ -182,7 +186,7 @@ skillgram mcp --read-only   # the agent can query, not use/propose
 `skillgram_search`, `skillgram_missing`, `skillgram_use`, `skillgram_status`,
 `skillgram_propose`. `missing` answering `{"found": false}` is the contract that says *do not
 invent a skill, tell the user*. `install` registers this server through each harness' own CLI
-and reads the config back afterwards â€” an exit code is not proof.
+and reads the config back afterwards — an exit code is not proof.
 
 ### The LLM, only where it earns its place
 
@@ -199,7 +203,7 @@ SKILLGRAM_LLM_MODEL      default deepseek-flash
 SKILLGRAM_LLM_API_KEY    or DEEPSEEK_API_KEY / OPENAI_API_KEY
 ```
 
-A project with a scope needs no LLM at all: that is *rÃ©gime*, where skillgram only serves the
+A project with a scope needs no LLM at all: that is *régime*, where skillgram only serves the
 set and answers "do we have something for this?".
 
 ### Finding, judging and retiring skills
@@ -226,7 +230,7 @@ name a stack become tags. A `package.json` with a flattened lockfile inside is n
 Candidates are ranked deterministically: a tag in the **name** is worth 3, in the **category**
 2, in the body of the `SKILL.md` 1, and anything under 2 is dropped instead of padding the
 list. A tag matches a **word**, not a fragment, with aliases where the tag is not the word
-(`go` â†’ `go`/`golang`, `ts` â†’ `ts`/`typescript`) â€” so `godmode` is not a Go skill and
+(`go` → `go`/`golang`, `ts` → `ts`/`typescript`) — so `godmode` is not a Go skill and
 `nodejs-keccak256` is not a React one.
 
 And when you already know your taste, say it instead of arguing with a score:
@@ -244,6 +248,25 @@ not a repo. Seeds come first in `bootstrap`'s candidates whatever their score, `
 them, and `list` marks them (`seed: true`). `missing` ignores them on purpose: a lookup is a
 specific need, not a recommendation.
 
+### Your name for a skill: `feature`
+
+A registry of the names you actually type, consulted **before** the catalog:
+
+```bash
+skillgram feature impecable impeccable --note "asi lo escribe el founder"
+skillgram feature list                  # the registry, with what it resolves to
+skillgram feature impecable --remove    # take it back
+```
+
+After that, `use impecable` promotes `impeccable` (and says so: `aliased`),
+`missing impecable` answers `impeccable` above every scored row, and `search impecable` prepends
+it -- FTS5 indexes what the skills *say*, not what you *call* them. The key is normalized on both
+sides (lowercase, accents dropped, punctuation to dashes), so `Impecáble!` finds the row written
+as `impecable`; a typo nobody registered stays unknown instead of walking off to the nearest
+name by edit distance. It lives in `~/.agents/skillgram-features.json`, next to the seeds,
+because a spelling is a taste and not a repo. Registering refuses a skill the hub does not have,
+and a row whose skill was retired is reported (`known: false`) instead of linking a ghost.
+
 ### Moving a hub around
 
 ```bash
@@ -260,14 +283,14 @@ The hub is the asset. With git under it, "sync between machines" is git's job.
 
 - It never copies, moves or deletes a native skill. Collisions are reported, not resolved.
 - It never edits a harness config by hand: MCP registration goes through that harness' CLI.
-- It never guesses which harness is asking (`SKILLGRAM_HARNESS` â†’ `--harness` â†’ process tree â†’
+- It never guesses which harness is asking (`SKILLGRAM_HARNESS` → `--harness` → process tree →
   `unknown`, and it says so).
 - It never publishes a skill nobody approved.
 - It is not a memory store, a prompt library, or an embeddings index.
 
 ## Safety
 
-- Links only. Dead-link cleanup only touches links that resolve inside the hub â€” never
+- Links only. Dead-link cleanup only touches links that resolve inside the hub — never
   content, never a real directory.
 - `onboard` copies and verifies the hash before reporting success; the original only moves to
   `~/.agents/skillgram-quarantine/<harness>/<skill>` with `--replace-natives`, and never to the
@@ -277,11 +300,11 @@ The hub is the asset. With git under it, "sync between machines" is git's job.
 
 ## Report a bug or a gap
 
-Two different things, two different channels â€” mixing them is how a roadmap turns into noise.
+Two different things, two different channels — mixing them is how a roadmap turns into noise.
 A **gap** (the hub has nothing for a capability) is a *request*: `skillgram_missing` answers
 `found:false`, the agent offers `propose`, and the query is recorded in the demand log
 (`skillgram demand` ranks what nobody could answer). A **bug** (skillgram itself failed) is one
-JSON line with `ok:false` and a non-zero exit â€” never dressed up as a skill.
+JSON line with `ok:false` and a non-zero exit — never dressed up as a skill.
 
 The repo ships both forms in `.github/ISSUE_TEMPLATE/` (`bug_report.yml`, `skill_request.yml`)
 and the skill that walks an agent through them:
@@ -302,6 +325,7 @@ and the skill that walks an agent through them:
 | `index` / `search` / `missing` / `demand` | find, or learn what is missing. |
 | `touch` / `list` | declared usage: who used what, and from which harness (`by_harness`). |
 | `seed` / `seed --never` | taste: always recommended / never recommended, hub-wide. |
+| `feature` | the names that are not skill names: `impecable` means `impeccable`, and it is read before the catalog. `feature list` prints the registry. |
 | `review` / `pin` / `retire` | lifecycle. |
 | `export` / `import` / `diff` / `git` | move a hub around. |
 | `mcp` | stdio MCP server, 7 tools (`--read-only` to drop the write ones). |
@@ -309,19 +333,30 @@ and the skill that walks an agent through them:
 | `new` | scaffold a skill from the contract (`SKILL.md` + `SKILLMETA.json`); `lint` decides whether it ships. |
 | `watch` / `daemon` / `install-autostart` | keep it in sync by itself. |
 
-`skillgram --help` lists all of them (41); `skillgram <command> --help` is the contract for
+`skillgram --help` lists all of them (42); `skillgram <command> --help` is the contract for
 one. Every command prints **exactly one JSON line** on stdout (`--json` for the human ones too).
 `--hub`, `--json` and `--quiet` are global: `skillgram --hub X status` and `skillgram status --hub X`
 are the same command (the one after the subcommand wins when both are given). Exit code `0` healthy,
-`1` drift/error, `2` bad invocation â€” and a plan-only run (`onboard`, `precedence`, `bootstrap`)
+`1` drift/error, `2` bad invocation — and a plan-only run (`onboard`, `precedence`, `bootstrap`)
 is `0` when the plan was produced.
 
 ## What changed recently
 
 Full detail in [CHANGELOG.md](CHANGELOG.md) and in the [releases](https://github.com/Xhuk/skillgram/releases).
 
-**1.8.0 â€” `clone`: bring a hub in from a git repo**
-- `skillgram clone <url> [--hub PATH] [--ref BRANCH|TAG] [--force] [--no-sync]` â€” git does
+**1.10.0 - `feature`: the names you actually use**
+- `skillgram feature <alias> <skill>` registers a name that is not a skill name (`impecable` ->
+  `impeccable`); `feature --remove` drops it, `feature` prints the registry. Same shape as `seed`,
+  because a spelling is taste.
+- Features are read **before** the catalog: `use impecable` promotes `impeccable` (JSON `aliased`,
+  human `resolved from a feature`), `missing` puts the registered name above every scored row, and
+  `search` prepends it.
+- No fuzzy guessing: the key is normalized on both sides (lowercase, accents dropped, punctuation
+  to dashes), so `Impecáble!` finds `impecable`, and an unregistered typo stays unknown.
+- A row whose skill was retired is reported (`known: false`), never linked as a ghost.
+
+**1.8.0 — `clone`: bring a hub in from a git repo**
+- `skillgram clone <url> [--hub PATH] [--ref BRANCH|TAG] [--force] [--no-sync]` — git does
   the transport, and therefore the auth for a private repo; skillgram verifies what
   arrived and, unless `--no-sync`, links the harnesses so the skills are usable without a
   second command. `--ref` takes one branch or tag.
@@ -330,13 +365,13 @@ Full detail in [CHANGELOG.md](CHANGELOG.md) and in the [releases](https://github
   remote); a non-empty folder that is not a repo is refused unless `--force`, and then it
   **merges without clobbering**: the skills you already had win and are reported as
   `conflicts`.
-- It reports `skills`, `categories`, `commit` and `origin` â€” which is what a `hub.json`
+- It reports `skills`, `categories`, `commit` and `origin` — which is what a `hub.json`
   cannot tell you: which revision these came from.
 - `align --hashes` answers the other half of the same question: per skill, the hub hash,
   the hash the project recorded at `use` time, and what each harness actually reads (the
   link, a forked copy with its own hash, or nothing).
 
-**1.7.0 â€” `policy`: the gate, and it is not advice**
+**1.7.0 — `policy`: the gate, and it is not advice**
 - Three levels that merge monotonically: organization (`SKILLGRAM_POLICY` / `--policy`, a
   path or `url#ref` of a git repo, cached and hashed), project
   (`<repo>/.agents/policy.json`), user (`~/.agents/policy.json`). A child level may only
@@ -346,11 +381,11 @@ Full detail in [CHANGELOG.md](CHANGELOG.md) and in the [releases](https://github
 - `policy` shows every level with its hash; `policy check` names each violation with the
   rule and exits 1. The doors refuse: `use` rejects the skill, `mount` drops it from the
   set, `sync` does not create the link **and removes one that already exists**. `touch`
-  is never blocked â€” evidence is not access.
+  is never blocked — evidence is not access.
 - Impossible to enforce, stated once: this is not a sandbox. It gates what skillgram
   writes and fails CI; a developer with a shell is outside the threat model.
 
-**1.6.0 â€” `align`: the harnesses, told apart**
+**1.6.0 — `align`: the harnesses, told apart**
 - `skillgram align` reports, per harness, what it can actually load of this project
   (`via_project` / `via_home`), what it is missing, what it sees that is not in the set
   (`extra`, reported and never removed), and the native directories it will not touch.
@@ -358,34 +393,34 @@ Full detail in [CHANGELOG.md](CHANGELOG.md) and in the [releases](https://github
 - The rule it encodes: **the project set is the only source**. A harness that sees more
   is a violation to report, not a suggestion to propagate.
 
-**1.5.0 â€” taste is a decision, not a score**
+**1.5.0 — taste is a decision, not a score**
 - `seed` / `seed --never`: the hub-level list of skills that are always (or never) recommended.
   Seeds come first in `bootstrap` whatever their score, are promoted by `bootstrap --apply` even
   with no LLM, and the model may add to them but never drop them.
 - Ranking is weighted and precise: name 3 / category 2 / body 1, sub-threshold noise dropped, and
-  a tag matches a word, not a fragment (`go` â†’ `go`/`golang`, never `godmode`).
+  a tag matches a word, not a fragment (`go` → `go`/`golang`, never `godmode`).
 - `project-status` recommends the seeds the project is missing (`seeds_missing`), without ever
   failing on them.
 
-**1.4.3 â€” what a real repo found in ten minutes**
+**1.4.3 — what a real repo found in ten minutes**
 - `mount` keeps git clean: a delimited `.gitignore` block for the directories it links, so
   `git add -A` can never commit a skill as a copy. The scope (`config.json`, `skills.json`) stays
   tracked.
 - `bootstrap` reads the manifests of the root *and its subdirectories* and stops turning every
   dependency into a tag (a flattened lockfile is not a stack).
 
-**1.4.1 / 1.4.2 â€” the CLI and the record**
+**1.4.1 / 1.4.2 — the CLI and the record**
 - `onboard --apply` worked again (it read `categoria` while the plan writes `category`), the CLI
   went back to English, `--hub`/`--json`/`--quiet` work before or after the subcommand,
   `--version` exists, and `main` runs each command once (it used to hold the dispatch chain twice,
   re-running 22 machine commands and printing nothing).
 - The usage record names the harness (`by_harness`), so switching agent does not lose what the
   project was using. The injected protocol now says to read that record first and declare usage
-  after â€” and a test fails if the protocol names a command the CLI does not have.
+  after — and a test fails if the protocol names a command the CLI does not have.
 
 ## Authoring a skill: one contract, one gate (1.3)
 
-Three doors, the same gate â€” `lint`. The normative text is
+Three doors, the same gate — `lint`. The normative text is
 [docs/SKILL-CONTRACT.md](docs/SKILL-CONTRACT.md).
 
 ```bash
@@ -395,8 +430,8 @@ skillgram propose "<need>" --apply            # the LLM drafts it; the same gate
 skillgram lint --contract --strict            # the whole hub, warnings included (what CI should run)
 ```
 
-Every authored skill declares the same five sections â€” *Activation Contract* (when it applies and
-when it does not), *Hard Rules*, *Decision Gates*, *Execution Steps*, *Output Contract* â€” and
+Every authored skill declares the same five sections — *Activation Contract* (when it applies and
+when it does not), *Hard Rules*, *Decision Gates*, *Execution Steps*, *Output Contract* — and
 carries a `SKILLMETA.json` with who wrote it, when, and the content hash. Without that hash there
 is no `update` later, only overwrite.
 
@@ -416,7 +451,7 @@ remain open by decision. When one closes, the line goes away.
 3. **No real usage telemetry.** `use_count` counts explicit promotions and MCP `use` calls;
    skillgram does not observe which skills an agent actually reads.
 4. **Lexical search only.** FTS5 has no embeddings, so cross-language synonyms miss (measured:
-   `"cotizar credito hipotecario"` â†’ one weak hit).
+   `"cotizar credito hipotecario"` → one weak hit).
 5. **No permissions/roles.** No agent/admin split: anyone with a shell can publish or
    retire. `mcp --read-only` removes the write tools from a session, but it is a per-server
    switch, not a role. A file-based policy (`docs/POLICY.md`, designed, not built) is the
@@ -437,23 +472,23 @@ still partly Spanish; translating them is tracked as cleanup, not as behaviour.
 ## Prior art and credits
 
 skillgram is original code (MIT, stdlib only), but the ideas are not mine and pretending
-otherwise would be dishonest. These shaped it â€” if one of them is what you actually need, use
+otherwise would be dishonest. These shaped it — if one of them is what you actually need, use
 it directly:
 
-- **Engram** â€” the project-scope resolution order (`--project` â†’ env â†’ nearest
-  `.agents/config.json` up to the git root â†’ cwd), the "one store, a per-project view" model,
+- **Engram** — the project-scope resolution order (`--project` → env → nearest
+  `.agents/config.json` up to the git root → cwd), the "one store, a per-project view" model,
   and the CLI-plus-MCP split this repo copied the shape of.
-- **Agent Skills / `SKILL.md`** (Claude Code, then everyone else) â€” the `SKILL.md` + YAML
+- **Agent Skills / `SKILL.md`** (Claude Code, then everyone else) — the `SKILL.md` + YAML
   frontmatter format and the `.claude/skills` convention every other harness imitated.
   skillgram does not invent a format: it links yours.
-- **Codex, Cursor, Gemini CLI, Kiro, Qwen Code, Aider, OpenCode, Copilot** â€” their
+- **Codex, Cursor, Gemini CLI, Kiro, Qwen Code, Aider, OpenCode, Copilot** — their
   project-level `skills/` layouts are the reason `mount` knows eleven of them.
-- **ECC** â€” a 291-skill pack that lives next to this hub, and the reason every feature here is
+- **ECC** — a 291-skill pack that lives next to this hub, and the reason every feature here is
   tested against "does this still hold at ~850 skills?".
 - **Unix**, in the only sense that matters: one directory is the truth, every agent a client.
 
 No code was copied from any of them. Where a behaviour was learned from another tool, the
-section that documents it says so. If your project belongs in this list, open an issue â€” credit
+section that documents it says so. If your project belongs in this list, open an issue — credit
 is cheap, respect is not.
 
 ## Where the detail lives
@@ -479,7 +514,7 @@ ruff check . && mypy                         # the static gates CI runs
 The suite runs on Python 3.9, 3.11 and 3.13 in CI. Tests that need a junction skip on
 POSIX; the ones that need `git` or a real harness CLI skip when it is not installed.
 `install` is covered twice: against a stub through the documented
-`SKILLGRAM_MCP_CLI_<HARNESS>` switch, and â€” when a real CLI is on `PATH` â€” by asking that
+`SKILLGRAM_MCP_CLI_<HARNESS>` switch, and — when a real CLI is on `PATH` — by asking that
 CLI whether it understands the verb we build (read-only; no config is written).
 
 ## How the code is organised
@@ -502,6 +537,14 @@ A module may only import from the layers below it. `HOME` is read through
 `hub.home_dir()`, so one patch point moves the whole tool; nothing captures it at import
 time. `lint --baseline` accepts known debt and fails only on new failures, which is what
 makes the quality gate usable on a corpus that already has history.
+
+## Companion tool — edgePass
+
+`skillgram` and **[edgePass](https://xhuk.github.io/edgePass/)** ([GitHub](https://github.com/Xhuk/edgePass) · `winget install Xhuk.EdgePass`) are standalone tools designed to complement each other on an AI coding workstation:
+
+- **`skillgram`** governs *what your agents know*: one `SKILL.md` library, contract & admission gate, isolated `git worktree` trials, project manifests, and the zero-token `_vault`.
+- **`edgePass`** governs *what your agents can access & run*: a desktop notch widget & control plane that injects OpenBao secrets without plaintext exposure, manages MCP servers/tunnels, and supervises local GitHub Actions runners.
+- **Connected via `skillgram daemon`**: when both are installed, `edgePass` talks to `skillgram daemon` over its JSON-line pipe (`{"op": "status"}`, `{"op": "sync"}`) to show live skill drift on a desktop LED and sync all harnesses in one click.
 
 ## License
 

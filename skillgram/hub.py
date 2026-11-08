@@ -12,7 +12,7 @@ import sys
 import time
 from pathlib import Path
 
-VERSION = "1.9.0"
+VERSION = "1.10.0"
 
 
 HOME = Path(os.path.expanduser("~"))
@@ -49,12 +49,20 @@ class Hub:
         found: dict[str, str] = {}
         if not self.root.is_dir():
             return found
-        for tipo_dir in sorted(self.root.iterdir()):
+        try:
+            tipo_dirs = sorted(self.root.iterdir())
+        except OSError:
+            return found
+        for tipo_dir in tipo_dirs:
             if not tipo_dir.is_dir() or tipo_dir.is_symlink() or self._is_junction(tipo_dir):
                 continue
             if tipo_dir.name.startswith(".") or tipo_dir.name.startswith("_") or tipo_dir.name in self.exclude_agents:
                 continue
-            for skill_dir in sorted(tipo_dir.iterdir()):
+            try:
+                skill_dirs = sorted(tipo_dir.iterdir())
+            except OSError:
+                continue
+            for skill_dir in skill_dirs:
                 if not skill_dir.is_dir():
                     continue
                 if (skill_dir / "SKILL.md").is_file():
@@ -65,10 +73,18 @@ class Hub:
         if not self.root.is_dir():
             return []
         out = []
-        for d in sorted(self.root.iterdir()):
+        try:
+            entries = sorted(self.root.iterdir())
+        except OSError:
+            return []
+        for d in entries:
             if d.is_dir() and not self._is_junction(d) and not d.name.startswith(".") and not d.name.startswith("_"):
+                try:
+                    children = list(d.iterdir())
+                except OSError:
+                    continue
                 # un tipo es una carpeta cuyas hijas son skills
-                if any((c / "SKILL.md").is_file() for c in d.iterdir() if c.is_dir()):
+                if any((c / "SKILL.md").is_file() for c in children if c.is_dir()):
                     out.append(d.name)
         return out
 
@@ -81,15 +97,26 @@ class Hub:
         total = 0
         if not self.root.is_dir():
             return 0
-        for tipo_dir in self.root.iterdir():
+        try:
+            tipo_dirs = list(self.root.iterdir())
+        except OSError:
+            return 0
+        for tipo_dir in tipo_dirs:
             if not tipo_dir.is_dir() or self._is_junction(tipo_dir):
                 continue
-            for skill_dir in tipo_dir.iterdir():
+            try:
+                skill_dirs = list(tipo_dir.iterdir())
+            except OSError:
+                continue
+            for skill_dir in skill_dirs:
                 if not skill_dir.is_dir():
                     continue
-                for extra in skill_dir.rglob("SKILL.md"):
-                    if extra.parent != skill_dir:
-                        total += 1
+                try:
+                    for extra in skill_dir.rglob("SKILL.md"):
+                        if extra.parent != skill_dir:
+                            total += 1
+                except OSError:
+                    continue
         return total
 
     def agents(self) -> list[Path]:
@@ -102,19 +129,48 @@ class Hub:
         """
         roots: list[Path] = []
         own = self.root.resolve()
-        for entry in sorted(home_dir().iterdir()):
+        try:
+            home_entries = sorted(home_dir().iterdir())
+        except OSError:
+            home_entries = []
+        for entry in home_entries:
             if not entry.is_dir() or not entry.name.startswith("."):
                 continue
             if entry.name in self.exclude_agents:
                 continue
             cand = entry / "skills"
-            if cand.is_dir() and cand.resolve() != own:
-                roots.append(cand)
+            try:
+                if cand.is_dir() and cand.resolve() != own:
+                    roots.append(cand)
+            except OSError:
+                continue
         appdata = os.environ.get("APPDATA")
         if appdata:
             reasonix = Path(appdata) / "Reasonix" / "skills"
             if reasonix.is_dir() and reasonix.resolve() != own:
                 roots.append(reasonix)
+        # Una home anidada (`~/.config/opencode`) no cae en el barrido `~/.*/skills`,
+        # asi que la tabla responde por ella. Se deduplica por destino real: los
+        # harnesses de un solo nivel ya entraron arriba, y el hub nunca es agente.
+        seen = set()
+        for root in roots:
+            try:
+                seen.add(root.resolve())
+            except OSError:
+                continue
+        for row in detect_harnesses():
+            skills_dir = row.get("skills_dir")
+            if not skills_dir:
+                continue
+            cand = Path(skills_dir)
+            try:
+                resolved = cand.resolve()
+            except OSError:
+                continue
+            if resolved == own or resolved in seen:
+                continue
+            seen.add(resolved)
+            roots.append(cand)
         return roots
 
     @staticmethod
@@ -163,6 +219,9 @@ SKILL_META = "SKILLMETA.json"
 
 AGENTS_DIR = "agents"
 
+VAULT_DIR = "_vault"
+
+
 def skill_meta(skill_dir: Path) -> dict:
     path = skill_dir / SKILL_META
     try:
@@ -171,12 +230,91 @@ def skill_meta(skill_dir: Path) -> dict:
     except (OSError, ValueError):
         return {}
 
+
 def write_skill_meta(skill_dir: Path, meta: dict) -> None:
     path = skill_dir / SKILL_META
     try:
         path.write_text(json.dumps(meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     except OSError:
         pass
+
+
+def record_skill_usage(
+    skill_dir: Path,
+    project_name: str | None = None,
+    stack_tags: list[str] | None = None,
+    by: str = "agent",
+    unuse: bool = False,
+) -> dict:
+    """Persist organic usage, project survival, and stack affinity in SKILLMETA.json."""
+    if not skill_dir.is_dir():
+        return {}
+    meta = skill_meta(skill_dir)
+    usage = dict(meta.get("usage") or {})
+    if unuse:
+        usage["unuse_count"] = int(usage.get("unuse_count", 0)) + 1
+        projects = [p for p in (usage.get("projects") or []) if p != project_name]
+        usage["projects"] = projects
+    else:
+        usage["total_hits"] = int(usage.get("total_hits", 0)) + 1
+        usage["last_used"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        usage["last_used_by"] = by
+        if project_name:
+            projects = list(usage.get("projects") or [])
+            if project_name not in projects:
+                projects.append(project_name)
+            usage["projects"] = projects
+        if stack_tags:
+            shits = dict(usage.get("stack_hits") or {})
+            for tag in stack_tags:
+                t = str(tag).strip().lower()
+                if t:
+                    shits[t] = int(shits.get(t, 0)) + 1
+            usage["stack_hits"] = shits
+    meta["usage"] = usage
+    write_skill_meta(skill_dir, meta)
+    return usage
+
+
+def vault_skills(hub: Hub) -> dict[str, str]:
+    """Return {skill_name: category} for skills archived in `<hub>/_vault/<category>/<name>`."""
+    vroot = hub.root / VAULT_DIR
+    found: dict[str, str] = {}
+    if not vroot.is_dir():
+        return found
+    try:
+        cats = sorted(vroot.iterdir())
+    except OSError:
+        return found
+    for cat in cats:
+        if not cat.is_dir() or cat.name.startswith("."):
+            continue
+        try:
+            entries = sorted(cat.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.is_dir() and (entry / "SKILL.md").is_file():
+                found.setdefault(entry.name, cat.name)
+    return found
+
+
+def unvault_skill(hub: Hub, name: str) -> Path | None:
+    """Restore a vaulted skill back into `<hub>/<category>/<name>` on demand."""
+    vmap = vault_skills(hub)
+    if name not in vmap:
+        return None
+    tipo = vmap[name]
+    src = hub.root / VAULT_DIR / tipo / name
+    dest = hub.root / tipo / name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        return dest
+    try:
+        shutil.move(str(src), str(dest))
+        return dest
+    except OSError:
+        return None
 
 
 PROJECT_DIR = ".agents"
@@ -209,7 +347,11 @@ def skill_hash(skill_dir: Path) -> str:
       library as stale on the other machine.
     """
     h = hashlib.sha256()
-    for f in sorted(skill_dir.rglob("*")):
+    try:
+        files = sorted(skill_dir.rglob("*"))
+    except OSError:
+        files = []
+    for f in files:
         if not f.is_file() or "__pycache__" in f.parts:
             continue
         if f.name == SKILL_META and f.parent == skill_dir:
@@ -220,6 +362,31 @@ def skill_hash(skill_dir: Path) -> str:
         except OSError:
             pass
     return h.hexdigest()[:16]
+
+
+def dir_bytes(path: Path) -> int:
+    """Physical bytes under `path`, never following symlinks or junctions."""
+    total = 0
+    if not path.exists() or is_link(path):
+        return 0
+    stack = [path]
+    while stack:
+        cur = stack.pop()
+        try:
+            with os.scandir(cur) as it:
+                for entry in it:
+                    if is_link(entry.path):
+                        continue
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(Path(entry.path))
+                        elif entry.is_file(follow_symlinks=False):
+                            total += entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return total
 
 
 def project_config_name(project: Path) -> str | None:
@@ -248,10 +415,15 @@ def _read_manifest(project: Path) -> dict:
 
 
 def _write_manifest(project: Path, data: dict) -> None:
+    """The manifest is committed by the project, and it is written with LF on every
+    platform: a value this tool owns must not land as a whole-file diff just because
+    the machine is Windows (`use` on a LF manifest used to rewrite all 185 lines).
+    """
     path = project_dir(project) / PROJECT_MANIFEST
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    with tmp.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
     tmp.replace(path)
 
 
@@ -261,7 +433,10 @@ HARNESS_HOMES = {
     "cursor": ".cursor",
     "gemini-cli": ".gemini",
     "hermes": ".hermes",
-    "opencode": ".opencode",
+    # OpenCode resolves its global config as `OPENCODE_CONFIG_DIR`, else
+    # `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode` -- and its user skills
+    # live in `<config>/skills`. `~/.opencode` was never the home.
+    "opencode": ".config/opencode",
     "copilot": ".copilot",
     "windsurf": ".windsurf",
     "kiro": ".kiro",

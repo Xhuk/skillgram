@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>skillgram &mdash; Architecture, Use Cases &amp; Field Evidence</title>
+<meta name="description" content="How skillgram eliminates multi-agent context rot, curates third-party skills through an automated gate and git worktree trials, learns stack affinity from real LLM usage, and cuts global skill bloat by 99% on real workstations.">
+<link rel="canonical" href="https://xhuk.github.io/skillgram/architecture-and-evidence.html">
+<meta property="og:title" content="skillgram &mdash; Architecture, Use Cases &amp; Field Evidence">
+<meta property="og:description" content="Real production numbers from running 861 skills across 11 AI coding agents: tiered context architecture, git worktree trials, organic stack-affinity ranking, and zero-token vaulting.">
+<meta property="og:image" content="https://xhuk.github.io/skillgram/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:type" content="article">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://xhuk.github.io/skillgram/assets/twitter-image.png">
+<link rel="icon" type="image/x-icon" href="assets/favicon.ico" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/x-icon" href="assets/favicon-daylight.ico" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32x32.png" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-daylight-32x32.png" media="(prefers-color-scheme: light)">
+<link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
+<link rel="manifest" href="assets/site.webmanifest">
+<style>
+  :root {
+    --bg: #fbfaf8; --fg: #1b1b1a; --muted: #6b6a66; --line: #e2e0da;
+    --card: #ffffff; --accent: #b5523a; --code: #f2f0ec; --soft: #f6f4f0;
+    --ok: #2e6f40; --warn: #9a6700;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141413; --fg: #ecebe6; --muted: #a3a19a; --line: #2c2b28;
+      --card: #1c1c1a; --accent: #e08563; --code: #22221f; --soft: #1a1a18;
+      --ok: #5fb978; --warn: #d4a72c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 860px; margin: 0 auto; padding: 56px 24px 96px; }
+  nav.top {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+    padding-bottom: 20px; margin-bottom: 36px; border-bottom: 1px solid var(--line); font-size: 14px;
+  }
+  nav.top .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; color: var(--fg); }
+  nav.top .brand picture, nav.top .brand img { height: 34px; width: auto; display: block; }
+  .page-banner { margin: 0 0 28px; }
+  .page-banner picture, .page-banner img {
+    display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line);
+  }
+  nav.top .links { display: flex; gap: 18px; flex-wrap: wrap; }
+  h1 {
+    font: 600 36px/1.15 Georgia, "Times New Roman", serif;
+    letter-spacing: -0.02em; margin: 0 0 12px;
+  }
+  .dek { color: var(--muted); font-size: 18px; margin: 0 0 20px; max-width: 68ch; }
+  .byline {
+    color: var(--muted); font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.09em;
+    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    padding: 9px 0; margin: 24px 0 40px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  }
+  h2 {
+    font: 600 23px/1.25 Georgia, "Times New Roman", serif;
+    margin: 52px 0 12px; letter-spacing: -0.01em;
+  }
+  h3 {
+    font-size: 14px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--accent); margin: 28px 0 8px; font-weight: 600;
+  }
+  p { margin: 0 0 14px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+  code { background: var(--code); padding: 2px 5px; border-radius: 4px; font-size: 0.88em; }
+  pre {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; overflow-x: auto; font-size: 13.5px; line-height: 1.55; margin: 0 0 18px;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .callout {
+    border-left: 3px solid var(--accent); background: var(--soft);
+    padding: 14px 18px; border-radius: 0 8px 8px 0; margin: 20px 0;
+  }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin: 18px 0 24px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+  .card b { display: block; margin-bottom: 6px; font-size: 15px; }
+  .card span { color: var(--muted); font-size: 14px; display: block; }
+  .stat-row {
+    display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    margin: 22px 0 28px;
+  }
+  .stat {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px;
+  }
+  .stat .num {
+    font: 600 28px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--accent); display: block; margin-bottom: 6px;
+  }
+  .stat .lbl { font-size: 13px; color: var(--muted); }
+  .frame { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin: 20px 0 28px; }
+  svg { width: 100%; height: auto; display: block; }
+  svg text { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  table.data { width: 100%; border-collapse: collapse; font-size: 14px; margin: 16px 0 26px; }
+  table.data th {
+    text-align: left; font: 600 11px/1.4 ui-monospace, monospace; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line);
+    padding: 0 10px 8px 0;
+  }
+  table.data td {
+    padding: 10px 10px 10px 0; border-bottom: 1px solid var(--line);
+    font-variant-numeric: tabular-nums; vertical-align: top;
+  }
+  .badge {
+    display: inline-block; font: 600 11px/1 ui-monospace, monospace;
+    padding: 3px 6px; border-radius: 4px; background: var(--code); color: var(--fg);
+  }
+  .badge.pass { color: var(--ok); }
+  .badge.warn { color: var(--warn); }
+  .cta-box {
+    background: var(--card); border: 1.5px solid var(--accent); border-radius: 12px;
+    padding: 24px 26px; margin: 40px 0 24px;
+  }
+  .cta-box h2 { margin-top: 0; }
+  footer {
+    margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 8px 20px;
+  }
+</style>
+</head>
+<body>
+<main>
+
+  <nav class="top">
+    <a class="brand" href="index.html">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="assets/logo-lockup.svg">
+        <source media="(prefers-color-scheme: light)" srcset="assets/logo-lockup-daylight.svg">
+        <img src="assets/logo-lockup-daylight.svg" alt="skillgram">
+      </picture>
+    </a>
+    <div class="links">
+      <a href="index.html">Overview</a>
+      <a href="architecture-and-evidence.html"><b>Architecture &amp; Evidence</b></a>
+      <a href="diagrams/operativity.html">Three Plates</a>
+      <a href="https://xhuk.github.io/edgePass/">edgePass</a>
+      <a href="https://github.com/Xhuk/skillgram">GitHub</a>
+    </div>
+  </nav>
+
+  <div class="page-banner">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="assets/banner-readme-dark.png">
+      <source media="(prefers-color-scheme: light)" srcset="assets/banner-readme-daylight.png">
+      <img src="assets/banner-readme-daylight.png" alt="skillgram &mdash; One skill library, linked">
+    </picture>
+  </div>
+
+  <h1>Why We Stopped Linking 800 Skills Everywhere&mdash;and Built a Self-Curating Skill Hub</h1>
+  <p class="dek">
+    What happens when you use Claude Code, Codex, Cursor, Gemini, and OpenCode on the same machine?
+    A candid look at our architecture, the hypotheses we tested, real telemetry from our workstations,
+    and an invitation to try <code>skillgram</code> on yours.
+  </p>
+
+  <div class="byline">
+    <span>skillgram 1.10</span>
+    <span>Python 3.9+ &middot; stdlib only</span>
+    <span>Windows junctions &middot; POSIX symlinks &middot; MCP stdio</span>
+  </div>
+
+  <h2>1. The Fallacy vs. The Real Pain</h2>
+  <p>
+    When we started <code>skillgram</code>, our initial hypothesis was simple: <i>"Keep one copy of every
+    <code>SKILL.md</code> in <code>~/.agents/skills</code> and link all of them into every coding agent."</i>
+    After living with <b>861 skills (89 MB)</b> across 11 agent harnesses on Windows and Linux, we learned
+    a hard truth:
+  </p>
+
+  <div class="grid">
+    <div class="card">
+      <b>The Fallacy: Saving SSD Megabytes</b>
+      <span>800 Markdown files take ~89 MB on disk. Saving megabytes on a modern SSD is not why you need a skill manager.</span>
+    </div>
+    <div class="card">
+      <b>Pain #1: Context Rot (Token Bloat)</b>
+      <span>Exposing 861 skills globally injects ~45,000 tokens of descriptions into every agent's system prompt on every session&mdash;degrading reasoning and routing accuracy.</span>
+    </div>
+    <div class="card">
+      <b>Pain #2: Recursive Double-Loading</b>
+      <span>Modern harnesses scan <code>skills/</code> recursively. Linking both <code>skills/&lt;category&gt;</code> and <code>skills/&lt;skill&gt;</code> caused agents to load every skill twice (1,722 entries).</span>
+    </div>
+    <div class="card">
+      <b>Pain #3: Untested Third-Party Slop</b>
+      <span>Public skill directories are full of bloated, untested Markdown that collides with existing triggers or hides unsafe shell instructions.</span>
+    </div>
+  </div>
+
+  <div class="callout">
+    <b>Our thesis in 1.10:</b> Disk links are for <b>Single Source of Truth</b> (fix a skill in Claude Code, and
+    Codex/Cursor/Gemini immediately read the fix). Context is protected by <b>Tiered Visibility</b> (only seeds
+    globally, project manifests per repo, and zero-token lazy reading via MCP).
+  </div>
+
+  <h2>2. Architecture: Three Tiers + Organic Curation</h2>
+  <p>
+    Instead of dumping the entire hub into every agent's global folder, <code>skillgram</code> separates
+    <b>storage</b>, <b>active exposure</b>, and <b>on-demand discovery</b>:
+  </p>
+
+  <div class="frame">
+    <svg viewBox="0 0 820 310" role="img" aria-label="skillgram tiered context and curation architecture">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 8 5 L 0 9 z" fill="#b5523a"/>
+        </marker>
+      </defs>
+      <!-- Left: Curation & Trial -->
+      <rect x="14" y="20" width="230" height="270" rx="8" fill="none" stroke="#e2e0da" stroke-width="1.2"/>
+      <text x="28" y="44" fill="#b5523a" font-size="10" font-weight="600">1. ADMISSION &amp; TRIAL</text>
+      <rect x="28" y="60" width="202" height="58" rx="6" fill="#f6f4f0" stroke="#e2e0da"/>
+      <text x="38" y="82" fill="#1b1b1a" font-size="12" font-weight="600">skillgram gate &lt;skill&gt;</text>
+      <text x="38" y="100" fill="#6b6a66" font-size="10.5">Tokens &middot; Injection &middot; Collisions</text>
+
+      <rect x="28" y="134" width="202" height="64" rx="6" fill="#f6f4f0" stroke="#e2e0da"/>
+      <text x="38" y="156" fill="#1b1b1a" font-size="12" font-weight="600">skillgram try &lt;url&gt;</text>
+      <text x="38" y="174" fill="#6b6a66" font-size="10.5">Isolated git worktree sandbox</text>
+      <text x="38" y="189" fill="#6b6a66" font-size="10">--accept seals upstream hash</text>
+
+      <rect x="28" y="214" width="202" height="60" rx="6" fill="#f6f4f0" stroke="#e2e0da"/>
+      <text x="38" y="236" fill="#1b1b1a" font-size="12" font-weight="600">adopt --project .</text>
+      <text x="38" y="254" fill="#6b6a66" font-size="10.5">Absorbs local npx/git installs</text>
+
+      <!-- Center: The Hub -->
+      <rect x="286" y="20" width="248" height="270" rx="8" fill="none" stroke="#1b1b1a" stroke-width="1.4"/>
+      <text x="302" y="44" fill="#b5523a" font-size="10" font-weight="600">2. SINGLE SOURCE OF TRUTH</text>
+      <rect x="302" y="60" width="216" height="68" rx="6" fill="#f6f4f0" stroke="#e2e0da"/>
+      <text x="312" y="82" fill="#1b1b1a" font-size="12" font-weight="600">Active Hub (~/.agents/skills)</text>
+      <text x="312" y="100" fill="#6b6a66" font-size="10.5">Proven skills + SKILLMETA.json</text>
+      <text x="312" y="115" fill="#6b6a66" font-size="10">stack_hits &middot; projects &middot; unuse</text>
+
+      <rect x="302" y="142" width="216" height="68" rx="6" fill="#f6f4f0" stroke="#e2e0da"/>
+      <text x="312" y="164" fill="#1b1b1a" font-size="12" font-weight="600">The Vault (_vault/)</text>
+      <text x="312" y="182" fill="#6b6a66" font-size="10.5">0-hit skills archived safely</text>
+      <text x="312" y="197" fill="#6b6a66" font-size="10">0 global links &middot; 0 prompt tokens</text>
+
+      <rect x="302" y="224" width="216" height="50" rx="6" fill="#f6f4f0" stroke="#e2e0da"/>
+      <text x="312" y="246" fill="#1b1b1a" font-size="12" font-weight="600">SQLite FTS5 Index</text>
+      <text x="312" y="262" fill="#6b6a66" font-size="10.5">Indexes Active Hub + _vault</text>
+
+      <!-- Right: Harnesses & Projects -->
+      <rect x="576" y="20" width="230" height="270" rx="8" fill="none" stroke="#e2e0da" stroke-width="1.2"/>
+      <text x="590" y="44" fill="#b5523a" font-size="10" font-weight="600">3. TIERED AGENT EXPOSURE</text>
+      <rect x="590" y="60" width="202" height="58" rx="6" fill="#f6f4f0" stroke="#e2e0da"/>
+      <text x="600" y="82" fill="#1b1b1a" font-size="12" font-weight="600">Tier 0: Global Seeds</text>
+      <text x="600" y="100" fill="#6b6a66" font-size="10.5">sync --seeds-only (2&ndash;5 skills)</text>
+
+      <rect x="590" y="134" width="202" height="64" rx="6" fill="#f6f4f0" stroke="#e2e0da"/>
+      <text x="600" y="156" fill="#1b1b1a" font-size="12" font-weight="600">Tier 1: Project Scope</text>
+      <text x="600" y="174" fill="#6b6a66" font-size="10.5">use + mount (.agents/skills.json)</text>
+      <text x="600" y="189" fill="#6b6a66" font-size="10">Auto-unvaults on demand</text>
+
+      <rect x="590" y="214" width="202" height="60" rx="6" fill="#f6f4f0" stroke="#e2e0da"/>
+      <text x="600" y="236" fill="#1b1b1a" font-size="12" font-weight="600">Tier 2: MCP Lazy Read</text>
+      <text x="600" y="254" fill="#6b6a66" font-size="10.5">skillgram_search + skillgram_read</text>
+
+      <!-- Connectors -->
+      <line x1="230" y1="90" x2="298" y2="90" stroke="#b5523a" stroke-width="1.4" marker-end="url(#arr)"/>
+      <line x1="230" y1="166" x2="298" y2="105" stroke="#b5523a" stroke-width="1.4" marker-end="url(#arr)"/>
+      <line x1="230" y1="244" x2="298" y2="115" stroke="#b5523a" stroke-width="1.4" marker-end="url(#arr)"/>
+      <line x1="518" y1="90" x2="586" y2="90" stroke="#b5523a" stroke-width="1.4" marker-end="url(#arr)"/>
+      <line x1="518" y1="105" x2="586" y2="165" stroke="#b5523a" stroke-width="1.4" marker-end="url(#arr)"/>
+      <line x1="518" y1="248" x2="586" y2="244" stroke="#b5523a" stroke-width="1.4" marker-end="url(#arr)"/>
+    </svg>
+  </div>
+
+  <h2>3. Use Cases We Designed &amp; Tested</h2>
+
+  <h3>Use Case A &mdash; Testing Third-Party Skills Without Polluting Your Workspace</h3>
+  <p>
+    Most developers do not write <code>SKILL.md</code> files from scratch&mdash;they discover skills like
+    <code>impeccable</code> (UI craft) or <code>dokploy</code> (deployment) on GitHub and want to test them
+    and pull upstream updates safely.
+  </p>
+  <p>
+    Because every skill is domain-specific, you cannot write one generic unit test for all of them. Instead,
+    <code>skillgram</code> combines a deterministic <b>Admission Gate</b> with a disposable <b><code>git worktree</code> Trial</b>:
+  </p>
+<pre><code># 1. Stage a third-party skill (or an upstream update) in a detached git worktree of your repo
+python skillgram.py try https://github.com/author/impeccable --project ~/projects/my-next-app
+
+# 2. Test it with your agent inside the isolated worktree, then either seal or discard:
+python skillgram.py try impeccable --accept    # records upstream URL, commit SHA &amp; verified hash
+python skillgram.py try impeccable --reject    # removes the worktree and staging cleanly</code></pre>
+
+  <h3>Use Case B &mdash; Organic Curation: Let the LLM &amp; Project Stack Vote</h3>
+  <p>
+    How do you know which skills actually work across hundreds of candidates? <b>Real usage and survival.</b>
+  </p>
+  <ul>
+    <li><b>Local Absorption:</b> If you or <code>npx skills add</code> drop a skill directly into
+      <code>&lt;repo&gt;/.claude/skills/</code>, running <code>skillgram adopt --project .</code> moves it into
+      the Hub, leaves a junction in place, adds it to the repo manifest, and tags it with the repo's deterministic
+      stack signals (<code>repo_signals()</code>: e.g. <code>next</code>, <code>tailwind</code>, <code>docker</code>).</li>
+    <li><b>Stack-Affinity Ranking:</b> Every time an agent promotes (<code>skillgram_use</code>), reads
+      (<code>skillgram_read</code>), or touches (<code>skillgram_touch</code>) a skill, the Hub increments
+      <code>usage.stack_hits</code> for that repository's tags in <code>SKILLMETA.json</code>.</li>
+    <li><b>Survival vs. Removal:</b> If you keep the skill across projects, its score for that stack rises.
+      If it is noisy and you run <code>skillgram unuse &lt;skill&gt;</code>, <code>unuse_count</code> penalizes it.
+      Next time you bootstrap a repo with the same stack, proven skills rank first&mdash;even if their markdown never
+      mentions your framework by name.</li>
+  </ul>
+
+  <h2>4. Field Evidence: How It Performs on Our Machines</h2>
+  <p>
+    Below is the real telemetry from our primary Windows 11 development workstation running Claude Code,
+    Codex, Cursor, Gemini CLI, Antigravity, Hermes, and Reasonix against a library of <b>861 skills</b>:
+  </p>
+
+  <div class="stat-row">
+    <div class="stat">
+      <span class="num">89.0 MB</span>
+      <span class="lbl">Hub size across 861 skills in 18 categories</span>
+    </div>
+    <div class="stat">
+      <span class="num">858 / 861</span>
+      <span class="lbl">0-hit skills moved to <code>_vault</code> (still FTS5 searchable)</span>
+    </div>
+    <div class="stat">
+      <span class="num">-99.4%</span>
+      <span class="lbl">Reduction in global junctions &amp; startup prompt tokens</span>
+    </div>
+    <div class="stat">
+      <span class="num">0 bytes</span>
+      <span class="lbl">Duplicated across agents after <code>compact --apply</code></span>
+    </div>
+  </div>
+
+  <h3>Real Output 1 &mdash; Compaction &amp; Vault Audit on Workstation</h3>
+<pre><code>$ python skillgram.py compact --vault-unused
+hub: C:\Users\jics\.agents\skills (89,009,737 bytes)
+native copies: 0 bytes | quarantine: 0 bytes | reclaimable: 0 bytes
+dedupable: 0 (0 bytes) | unique native: 0 | divergent: 0
+(dry-run: run `skillgram compact --apply --purge-quarantine` to reclaim space)
+vault (_vault): 858 unused (0-hit) skills | 3 active (used/seeded)</code></pre>
+
+  <h3>Real Output 2 &mdash; Automated Admission Gate (<code>skillgram gate</code>)</h3>
+  <p>
+    Running <code>skillgram gate</code> on two real skills in our hub immediately surfaces token taxes
+    and routing collisions against existing skills before they ever touch an agent's global prompt:
+  </p>
+<pre><code>$ python skillgram.py gate skillgram/skills/brand-logo-extractor
+skill: brand-logo-extractor (PASS)  hash: 7147b1bd3218f738
+token budget: ~42 prompt tokens (always) | ~1570 body tokens (on read) | 1 aux files
+contract (5 sections): ok | organic hits: 0 across 0 projects
+routing collisions: imagegen (score 10), brand-voice (score 10), brand (score 9), powerpoint (score 8)
+
+$ python skillgram.py gate skillgram/skills/anti-slop-guardrails
+skill: anti-slop-guardrails (PASS)  hash: a791f6a5bef592c9
+token budget: ~44 prompt tokens (always) | ~3046 body tokens (on read) | 0 aux files
+contract (5 sections): ok | organic hits: 0 across 0 projects
+warnings: SKILL.md is ~3046 tokens (&gt;2500); split heavy reference text into references/
+routing collisions: new-branch-and-pr (score 10), receiving-code-review (score 10), simplify-code (score 9)</code></pre>
+
+  <h3>Before vs. After on the Same Machine</h3>
+  <table class="data">
+    <thead>
+      <tr>
+        <th>Metric</th>
+        <th>Naive Global Sync (Before)</th>
+        <th>Tiered Hub + Vault + MCP (Now)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><b>Skills discovered per agent</b></td>
+        <td>1,722 (861 flat + 861 via category links)</td>
+        <td><b>3 global seeds</b> + 5&ndash;10 project skills</td>
+      </tr>
+      <tr>
+        <td><b>Global junctions on disk</b></td>
+        <td>~21,500 across agent homes</td>
+        <td><b>&lt; 80</b> (<code>sync --seeds-only</code>)</td>
+      </tr>
+      <tr>
+        <td><b>Startup system-prompt tax</b></td>
+        <td>~38,000 &ndash; 52,000 tokens every session</td>
+        <td><b>~150 tokens</b> globally + on-demand <code>skillgram_read</code></td>
+      </tr>
+      <tr>
+        <td><b>Access to the other 858 skills</b></td>
+        <td>Always loaded in context (noisy)</td>
+        <td><b>100% indexed in FTS5</b>; auto-unvaulted on <code>use</code> or read via MCP</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>5. Companion Ecosystem: <code>skillgram</code> + <code>edgePass</code></h2>
+  <p>
+    Managing an AI coding workstation has two halves: <b>what your agents know</b> (skills &amp; instructions)
+    and <b>what your agents can execute and access</b> (secrets, MCP daemons, tunnels, and local CI runners).
+    We built <code>skillgram</code> and <a href="https://xhuk.github.io/edgePass/"><b>edgePass</b></a> so each
+    lives cleanly on its own&mdash;zero hard dependency on the other&mdash;while snapping together automatically when both
+    are present on the same machine:
+  </p>
+
+  <div class="grid">
+    <div class="card">
+      <b>Standalone: <code>skillgram</code></b>
+      <span>CLI + MCP server for <code>SKILL.md</code> governance: hub deduplication, contract &amp; security gate, worktree trials, stack-affinity ranking, and zero-token vaulting.</span>
+    </div>
+    <div class="card">
+      <b>Standalone: <a href="https://xhuk.github.io/edgePass/"><code>edgePass</code></a></b>
+      <span>Native desktop notch widget &amp; control plane that injects OpenBao secrets into processes without exposing plaintext tokens in agent configs or logs, plus live LEDs for MCP servers and local GitHub Actions runners.</span>
+    </div>
+    <div class="card">
+      <b>Connected via <code>skillgram daemon</code></b>
+      <span><code>edgePass</code> speaks to <code>skillgram daemon</code> over a local JSON-line pipe (<code>{"op": "status"}</code>, <code>{"op": "sync"}</code>) to surface real-time skill drift on a desktop LED and sync all harnesses in one click.</span>
+    </div>
+  </div>
+
+  <div class="callout">
+    <b>Discover the other half of the stack:</b> Visit
+    <a href="https://xhuk.github.io/edgePass/"><b>xhuk.github.io/edgePass</b></a> or the
+    <a href="https://github.com/Xhuk/edgePass">edgePass GitHub repository</a>
+    (installable via <code>winget install Xhuk.EdgePass</code>) to see how secret injection, MCP health,
+    and local runner supervision pair with <code>skillgram</code>.
+  </div>
+
+  <div class="cta-box">
+    <h2>6. Try It on Your Machine &amp; Share Your Telemetry</h2>
+    <p>
+      If you run two or more coding agents (Claude Code, Codex, Cursor, Gemini CLI, OpenCode, Windsurf, Aider),
+      you can audit your current skill footprint in <b>60 seconds</b> with zero external dependencies (Python 3.9+ stdlib only):
+    </p>
+<pre><code>git clone https://github.com/Xhuk/skillgram
+cd skillgram
+
+# 1. See how many harnesses, native copies, and collisions you have right now:
+python skillgram.py doctor
+
+# 2. Measure duplicated bytes and 0-hit skills (dry-run, touches nothing):
+python skillgram.py compact --vault-unused
+
+# 3. Audit any skill's token cost, security, and trigger collisions:
+python skillgram.py gate &lt;path-to-any-skill&gt;
+
+# 4. Reclaim space, vault unused skills, and link only your seeds globally:
+python skillgram.py compact --vault-unused --apply --purge-quarantine
+python skillgram.py sync --seeds-only</code></pre>
+    <p>
+      <b>Help us gather field evidence:</b> Run <code>python skillgram.py compact --vault-unused --json</code>
+      on your machine and share the JSON summary (or open a report with <code>skillgram-report</code>) in
+      <a href="https://github.com/Xhuk/skillgram/issues/new/choose">GitHub Issues</a>. We are collecting
+      real-world benchmarks on how many skills developers actually use per stack versus how many sit idle.
+    </p>
+  </div>
+
+  <footer>
+    <span>MIT License</span>
+    <a href="index.html">Home</a>
+    <a href="diagrams/operativity.html">Operativity Plates</a>
+    <a href="https://xhuk.github.io/edgePass/">edgePass (Companion Tool)</a>
+    <a href="https://github.com/Xhuk/skillgram">GitHub Repository</a>
+    <a href="https://github.com/Xhuk/skillgram/issues/new/choose">Submit Field Telemetry</a>
+  </footer>
+
+</main>
+</body>
+</html>

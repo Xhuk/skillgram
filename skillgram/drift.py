@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .govern import policy_for, policy_verdict
+from .govern import policy_for, policy_verdict, read_seeds
 from .hub import (
     VERSION,
     Hub,
@@ -50,19 +50,29 @@ class Plan:
 
 
 def plan(hub: Hub, agents: list[Path] | None = None, deep: bool = False,
-         policy: list | None = None) -> Plan:
+         policy: list | None = None, flat_only: bool = False,
+         seeds_only: bool = False) -> Plan:
     """Calcula el drift sin tocar nada.
 
-    RÃƒÂ¡pido por defecto: **un `scandir` por agente** y `readlink` sÃƒÂ³lo en los links que
-    sobran. AsÃƒÂ­ `status` responde en milisegundos y el LED de edgePass puede sondearlo
-    cada 5 s sin castigar la mÃƒÂ¡quina (con el chequeo completo tardaba 3.3 s porque hacÃƒÂ­a
+    Rápido por defecto: **un `scandir` por agente** y `readlink` sólo en los links que
+    sobran. Así `status` responde en milisegundos y el LED de edgePass puede sondearlo
+    cada 5 s sin castigar la máquina (con el chequeo completo tardaba 3.3 s porque hacía
     21 mil `readlink`).
 
-    `deep=True` ademÃƒÂ¡s verifica **a dÃƒÂ³nde apunta** cada enlace esperado: es lo que usa
-    `sync` para arreglar un enlace torcido (el caso raro: alguien re-apuntÃƒÂ³ una junction).
+    `deep=True` además verifica **a dónde apunta** cada enlace esperado: es lo que usa
+    `sync` para arreglar un enlace torcido (el caso raro: alguien re-apuntó una junction).
+    `flat_only=True` (o `SKILLGRAM_SYNC_FLAT=1`) omite los enlaces por categoría para
+    que los agentes que escanean recursivamente `skills/` no carguen cada skill dos veces.
+    `seeds_only=True` (o `SKILLGRAM_SYNC_SEEDS=1`) enlaza globalmente sólo las skills
+    declaradas en `seeds.always`, eliminando el resto de enlaces globales.
     """
     skills = hub.skills()
     tipos = hub.tipos()
+    seeds_mode = seeds_only or os.environ.get("SKILLGRAM_SYNC_SEEDS") == "1"
+    if seeds_mode:
+        seeded = set(read_seeds()["always"])
+        skills = {n: t for n, t in skills.items() if n in seeded}
+    flat = flat_only or seeds_mode or os.environ.get("SKILLGRAM_SYNC_FLAT") == "1"
     result = Plan()
     hub_root = hub.root.resolve()
     agents = agents if agents is not None else hub.agents()
@@ -79,7 +89,7 @@ def plan(hub: Hub, agents: list[Path] | None = None, deep: bool = False,
         is_hub = agent.resolve() == hub_root
         counts = {"categories": 0, "flat": 0, "repointed": 0, "dead": 0, "skipped": 0}
         expected: dict[str, Path] = {}
-        if not is_hub:
+        if not is_hub and not flat:
             for tipo in tipos:
                 expected[tipo] = hub_root / tipo
         for name, tipo in skills.items():
@@ -190,15 +200,38 @@ def _remove_junction(path: Path) -> bool:
 def make_links(pairs: list) -> int:
     """Crea un enlace por cada (destino, origen). Junctions en Windows, symlinks fuera.
 
-    Windows crea todo en un solo `cmd` porque `mklink` es un builtin. En macOS/Linux
-    no hay `cmd`: sin esta rama el tool entero era Windows-only aunque el README
-    prometiera symlinks.
+    Windows intenta primero `_winapi.CreateJunction` (stdlib, sin proceso `cmd.exe`
+    ni problemas de ANSI/`%` en un `.bat`) y cae en `_run_batch` si hace falta. En
+    macOS/Linux usa `os.symlink`. Nunca toca un directorio real existente.
     """
     created = 0
     if not pairs:
         return created
     if os.name == "nt":
-        _run_batch([f'mklink /J "{dest}" "{src}"' for dest, src in pairs])
+        create_junction = None
+        try:
+            import _winapi
+            create_junction = getattr(_winapi, "CreateJunction", None)
+        except ImportError:
+            create_junction = None
+        fallback = []
+        for dest, src in pairs:
+            dest, src = Path(dest), Path(src)
+            if os.path.lexists(dest):
+                continue
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                continue
+            if create_junction is not None:
+                try:
+                    create_junction(str(src), str(dest))
+                    continue
+                except OSError:
+                    pass
+            fallback.append(f'mklink /J "{dest}" "{src}"')
+        if fallback:
+            _run_batch(fallback)
     else:
         for dest, src in pairs:
             try:
@@ -246,13 +279,15 @@ def apply_plan(p: Plan, quiet: bool = False) -> dict:
     return report
 
 
-def sync(hub: Hub, quiet: bool = False, dry_run: bool = False) -> dict:
+def sync(hub: Hub, quiet: bool = False, dry_run: bool = False,
+         flat_only: bool = False, seeds_only: bool = False) -> dict:
     # sync va profundo: es el que arregla un enlace torcido.
-    p = plan(hub, deep=True, policy=policy_for(None))
+    levels = policy_for(None)
+    p = plan(hub, deep=True, policy=levels, flat_only=flat_only, seeds_only=seeds_only)
     if dry_run:
         return {"ok": True, "dryRun": True, **p.summary()}
     done = apply_plan(p, quiet=quiet)
-    after = plan(hub, deep=True)
+    after = plan(hub, deep=True, policy=levels, flat_only=flat_only, seeds_only=seeds_only)
     return {
         "ok": after.drift == 0,
         "op": "sync",
@@ -267,8 +302,9 @@ def sync(hub: Hub, quiet: bool = False, dry_run: bool = False) -> dict:
     }
 
 
-def status(hub: Hub, watching: bool = False, deep: bool = False) -> dict:
-    p = plan(hub, deep=deep)
+def status(hub: Hub, watching: bool = False, deep: bool = False,
+           flat_only: bool = False, seeds_only: bool = False) -> dict:
+    p = plan(hub, deep=deep, flat_only=flat_only, seeds_only=seeds_only)
     return {
         "ok": True,
         "op": "status",

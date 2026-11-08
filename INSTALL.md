@@ -151,7 +151,13 @@ anyone explaining it again. Say what you always want recommended once, in the hu
 ```bash
 skillgram seed qring-anti-slop          # always recommended, every repo
 skillgram seed <skill> --never          # never recommended, any repo
+skillgram feature impecable impeccable  # the name you type means that skill
 ```
+
+A `feature` is a name that is not a skill name (`impecable` for `impeccable`, a house
+abbreviation, a misspelling you are not going to fix in your fingers). It is read **before** the
+catalog: `use impecable` promotes `impeccable`, `missing impecable` answers it, `search` prepends
+it. `skillgram feature list` prints the registry; `--remove` drops a row.
 
 ## Uninstall
 

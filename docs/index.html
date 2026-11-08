@@ -1,17 +1,31 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>skillgram â€” skill governance for AI agents (contract, provenance, registry)</title>
+<title>skillgram &mdash; skill governance for AI agents (contract, provenance, registry)</title>
 <meta name="description" content="skillgram governs the skills your AI agents load: one SKILL.md library, a contract every skill has to pass, provenance with a hash, declared usage per agent, seeds that say what is always recommended, and links into Claude Code, Codex, Cursor, Hermes, Reasonix and any harness that reads skills.">
-<meta name="keywords" content="skill management for AI agents, admin skills, agent skills, skill registry, skill library, SKILL.md, Claude Code skills, Codex, Cursor, Hermes, Reasonix, MCP">
+<meta name="keywords" content="skill management for AI agents, admin skills, agent skills, skill registry, skill library, SKILL.md, Claude Code skills, Codex, Cursor, Hermes, Reasonix, MCP, edgePass">
 <link rel="canonical" href="https://xhuk.github.io/skillgram/">
-<meta property="og:title" content="skillgram â€” skill governance for AI agents">
+<meta property="og:title" content="skillgram &mdash; skill governance for AI agents">
 <meta property="og:description" content="One skill library, a contract that gates what enters it, and every coding agent reading the same thing. Links instead of copies, plus an MCP server so the agent asks the hub before inventing.">
-<meta property="og:image" content="https://xhuk.github.io/skillgram/logo.png">
 <meta property="og:type" content="website">
-<link rel="icon" href="logo.png">
+<!-- skillgram Brand Icons & Open Graph Meta Tags -->
+<link rel="icon" type="image/x-icon" href="assets/favicon.ico" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/x-icon" href="assets/favicon-daylight.ico" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32x32.png" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-daylight-32x32.png" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16x16.png" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-daylight-16x16.png" media="(prefers-color-scheme: light)">
+<link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
+<link rel="manifest" href="assets/site.webmanifest">
+<meta name="theme-color" content="#0c151e" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#fbfaf8" media="(prefers-color-scheme: light)">
+<meta property="og:image" content="https://xhuk.github.io/skillgram/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://xhuk.github.io/skillgram/assets/twitter-image.png">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -21,6 +35,7 @@
   "operatingSystem": "Windows, macOS, Linux",
   "description": "Skill governance for AI coding agents: one SKILL.md registry, a contract every skill must pass, provenance with a hash, declared usage per harness, seeds for what is always recommended, per-project scope and an MCP server.",
   "url": "https://xhuk.github.io/skillgram/",
+  "image": "https://xhuk.github.io/skillgram/assets/og-image.png",
   "downloadUrl": "https://github.com/Xhuk/skillgram",
   "license": "https://opensource.org/licenses/MIT",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
@@ -29,11 +44,11 @@
 <style>
   :root {
     --bg: #fbfaf8; --fg: #1b1b1a; --muted: #6b6a66; --line: #e2e0da;
-    --card: #ffffff; --accent: #b5523a; --code: #f2f0ec;
+    --card: #ffffff; --accent: #0f766e; --code: #f2f0ec;
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #141413; --fg: #ecebe6; --muted: #a3a19a; --line: #2c2b28;
-             --card: #1c1c1a; --accent: #e08563; --code: #22221f; }
+    :root { --bg: #0c151e; --fg: #ecebe6; --muted: #94a3b8; --line: #1e293b;
+             --card: #111d2a; --accent: #10b981; --code: #162435; }
   }
   * { box-sizing: border-box; }
   body {
@@ -41,10 +56,15 @@
     font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
-  main { max-width: 760px; margin: 0 auto; padding: 64px 24px 96px; }
-  header { display: flex; align-items: center; gap: 20px; margin-bottom: 40px; }
-  header img { width: 72px; height: 72px; border-radius: 16px; }
-  h1 { font-size: 34px; line-height: 1.15; margin: 0 0 6px; letter-spacing: -0.02em; }
+  main { max-width: 780px; margin: 0 auto; padding: 48px 24px 96px; }
+  .hero-banner { margin-bottom: 28px; }
+  .hero-banner picture, .hero-banner img {
+    display: block; width: 100%; height: auto; border-radius: 14px;
+    border: 1px solid var(--line);
+  }
+  header { display: flex; align-items: center; gap: 18px; margin-bottom: 28px; }
+  header picture, header img { width: 64px; height: 64px; flex-shrink: 0; }
+  h1 { font-size: 32px; line-height: 1.15; margin: 0 0 6px; letter-spacing: -0.02em; }
   .tagline { color: var(--muted); margin: 0; font-size: 17px; }
   h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
        margin: 44px 0 12px; font-weight: 600; }
@@ -63,14 +83,26 @@
   .card b { display: block; margin-bottom: 4px; }
   .card span { color: var(--muted); font-size: 14px; }
   footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line);
-           color: var(--muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 8px 20px; }
+           color: var(--muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; }
   .note { border-left: 3px solid var(--accent); padding: 2px 0 2px 14px; color: var(--muted); }
 </style>
 </head>
 <body>
 <main>
+  <div class="hero-banner">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="assets/banner-readme-dark.png">
+      <source media="(prefers-color-scheme: light)" srcset="assets/banner-readme-daylight.png">
+      <img src="assets/banner-readme-daylight.png" alt="skillgram &mdash; Skill governance for AI coding agents">
+    </picture>
+  </div>
+
   <header>
-    <img src="logo.png" alt="">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="assets/emblem-master-dark.png">
+      <source media="(prefers-color-scheme: light)" srcset="assets/emblem-master-daylight.png">
+      <img src="assets/emblem-master-daylight.png" alt="skillgram emblem">
+    </picture>
     <div>
       <h1>skillgram</h1>
       <p class="tagline">Skill governance for AI agents. One library, a contract that gates it, every agent reading the same thing.</p>
@@ -103,25 +135,45 @@ python skillgram.py install             # harness -&gt; hub -&gt; MCP -&gt; proj
     <div class="card"><b>One link per skill</b><span>Each harness gets a junction (or symlink) in its own <code>skills/</code> folder.</span></div>
     <div class="card"><b>Native skills untouched</b><span>A name collision is skipped and reported, never overwritten.</span></div>
     <div class="card"><b>Project scope</b><span><code>use</code> + <code>mount</code> give a repo exactly its set, not the whole library.</span></div>
-    <div class="card"><b>Ask the hub</b><span><code>skillgram mcp</code> exposes 7 tools: search, missing, use, status, propose, touch, list.</span></div>
+    <div class="card"><b>Ask the hub</b><span><code>skillgram mcp</code> exposes 8 tools: search, missing, read, use, status, propose, touch, list.</span></div>
+    <div class="card"><b>Gate &amp; Worktree trials</b><span><code>gate</code> audits token cost, injection, and trigger collisions; <code>try</code> stages external skills in an isolated <code>git worktree</code> before sealing them.</span></div>
+    <div class="card"><b>Zero-token Vault</b><span><code>compact --vault-unused</code> parks 0-hit skills in <code>_vault/</code> (0 global links, 0 prompt tokens) while keeping them FTS5-searchable and auto-unvaulted on <code>use</code>.</span></div>
     <div class="card"><b>Declared usage</b><span><code>touch</code> + <code>list --used</code>: what an agent says it used, per project, and from which harness. It never claims to see what it reads.</span></div>
     <div class="card"><b>Taste</b><span><code>seed</code> marks what you always want recommended (<code>seed --never</code> for the opposite). A hub-level decision the ranking cannot outvote.</span></div>
     <div class="card"><b>Harness-agnostic memory</b><span>The record lives in the project, not the agent: change harness and the next one reads what the last one used.</span></div>
     <div class="card"><b>Idempotent</b><span>Every command prints one JSON line and can run twice without changing anything.</span></div>
   </div>
 
-  <h2>How it operates</h2>
-  <p>Three editorial plates, no screenshots: the loop, the files a mount leaves behind, and the
-  arithmetic that decides which skills a repo is offered.</p>
+  <h2>How it operates &amp; field evidence</h2>
+  <p>Read the full architecture write-up with real workstation telemetry (861 skills, 89 MB hub, 99.4% context reduction), plus three editorial plates on the internal mechanics:</p>
   <ul>
-    <li><a href="diagrams/operativity.html#loop">Plate I â€” the loop, on one page</a></li>
-    <li><a href="diagrams/operativity.html#mount">Plate II â€” what <code>mount --apply</code> leaves in a repo</a></li>
-    <li><a href="diagrams/operativity.html#ranking">Plate III â€” how a candidate earns its place</a></li>
+    <li><a href="architecture-and-evidence.html"><b>Architecture, Use Cases &amp; Field Evidence</b> &mdash; why we stopped linking 800 skills everywhere, how organic curation works, and how to test it on your machine</a></li>
+    <li><a href="diagrams/operativity.html#loop">Plate I &mdash; the loop, on one page</a></li>
+    <li><a href="diagrams/operativity.html#mount">Plate II &mdash; what <code>mount --apply</code> leaves in a repo</a></li>
+    <li><a href="diagrams/operativity.html#ranking">Plate III &mdash; how a candidate earns its place</a></li>
   </ul>
 
   <h2>What it is not</h2>
   <p>Not a prompt manager, not a memory store, not an embeddings index. It links and administers
   skills your agents already read, and it never guesses which harness is asking.</p>
+
+  <h2>Companion tool &mdash; edgePass</h2>
+  <p><code>skillgram</code> and <a href="https://xhuk.github.io/edgePass/"><b>edgePass</b></a> are independent tools built to work standalone or snap together as a complete local AI agent workstation:</p>
+  <div class="grid">
+    <div class="card">
+      <b>skillgram (Knowledge Governance)</b>
+      <span>Governs <i>what your agents know</i>: one <code>SKILL.md</code> hub, admission gate, worktree trials, project manifests, and the zero-token vault.</span>
+    </div>
+    <div class="card">
+      <b><a href="https://xhuk.github.io/edgePass/">edgePass</a> (Runtime &amp; Secret Governance)</b>
+      <span>A desktop notch widget &amp; control plane that governs <i>what your agents can touch</i>: OpenBao secrets injected without plaintext exposure, MCP servers/tunnels, and local GitHub Actions runners.</span>
+    </div>
+    <div class="card">
+      <b>Better together (<code>skillgram daemon</code>)</b>
+      <span>When both are installed, <code>edgePass</code> connects to <code>skillgram daemon</code> over a local JSON-line pipe to show live skill drift on a desktop LED and trigger one-click syncs.</span>
+    </div>
+  </div>
+  <p style="margin-top: 12px;">Explore <a href="https://xhuk.github.io/edgePass/">edgePass on GitHub Pages</a> or <a href="https://github.com/Xhuk/edgePass">GitHub</a> (<code>winget install Xhuk.EdgePass</code>).</p>
 
   <h2>Read more</h2>
   <ul>
@@ -130,12 +182,14 @@ python skillgram.py install             # harness -&gt; hub -&gt; MCP -&gt; proj
     <li><a href="diagrams/skillgram-install.html">The install flow, as an interactive diagram</a></li>
     <li><a href="https://github.com/Xhuk/skillgram/blob/main/CHANGELOG.md">Changelog</a></li>
     <li><a href="https://github.com/Xhuk/skillgram/blob/main/skillgram/skills/skillgram-report/SKILL.md">How an agent should report a bug or a gap</a></li>
+    <li><a href="https://xhuk.github.io/edgePass/">edgePass &mdash; companion secret, MCP &amp; runner control plane for AI agents</a></li>
   </ul>
 
   <footer>
     <span>MIT</span>
     <a href="https://github.com/Xhuk/skillgram/releases/latest">latest release</a>
     <a href="https://github.com/Xhuk/skillgram/issues/new/choose">Report a bug or ask for a skill</a>
+    <a href="https://xhuk.github.io/edgePass/">edgePass</a>
   </footer>
 </main>
 </body>

@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.10.0 (unreleased in PyPI) — the names you actually use: `feature`
+
+`impecable` is not a skill. It is how this founder spells `impeccable`, and every door that
+answered "unknown in hub" for it was the tool arguing with its own user. A **features registry**
+(`~/.agents/skillgram-features.json`) now answers before the catalog does.
+
+- **`skillgram feature <alias> <skill>`** registers a name; `feature list` (or no argument)
+  prints the registry, `feature --remove <alias>` drops a row. It takes the same shape as `seed`,
+  because both are taste. `list` is an action only when it stands alone, so a skill called `list`
+  can still be registered as an alias.
+  `--note` keeps the reason with the row, and registering refuses a skill the hub does not have:
+  the registry is a pointer, not a wish.
+- **Features are read first, on purpose.** `use impecable` promotes `impeccable` and says so in
+  the human report (`resolved from a feature: impecable -> impeccable`) and in the JSON
+  (`aliased`). `missing` puts a registered name above every scored row (`score: 99`, `why:
+  feature: <name>`), and `search` prepends it — FTS5 is about what skills *say*, not about what
+  you *call* them.
+- **No fuzzy guessing.** The key is normalized on both sides (lowercase, accents dropped,
+  punctuation to dashes), so `Impecáble!` finds the row written as `impecable`, and a typo
+  nobody registered stays unknown instead of walking off to the nearest name by edit distance.
+  A name that normalizes to a real skill name resolves to it (`Impeccable` -> `impeccable`).
+- **A row that outlived its skill is reported, not linked.** Retiring `impeccable` leaves
+  `impecable` pointing at a ghost: `feature` marks it `known: false`, `use` answers `unknown`,
+  and nothing is created.
+- **OpenCode's user skills are where OpenCode says they are.** `HARNESS_HOMES` pointed at
+  `~/.opencode`, a home OpenCode never had: it resolves `OPENCODE_CONFIG_DIR`, else
+  `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`, and keeps user skills in
+  `<config>/skills`. `detect_harnesses` now reports the real home, and `Hub.agents()` asks that
+  table for harnesses whose home is nested, so a skill created from OpenChamber's UI in
+  `~/.config/opencode/skills` is seen, adopted and synced instead of silently living outside the
+  hub. Deduped by resolved path: the single-level homes the `~/.*/skills` sweep already found are
+  not returned twice.
+- 205 tests (`TestFeatures`, `TestCliSurface` for both outputs), `ruff` and `mypy` clean.
+
 ## 1.9.0 (unreleased in PyPI) — the file became a package, the gates exist, and it ships skills
 
 Two skills travel inside the package now, and `install` seeds them into the hub:

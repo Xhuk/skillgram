@@ -1,0 +1,27 @@
+{
+  "name": "skillgram \u2014 Skill Governance for AI Agents",
+  "short_name": "skillgram",
+  "description": "One SKILL.md library, a contract that gates what enters it, provenance with a hash, and links into every AI coding agent.",
+  "start_url": "/skillgram/",
+  "display": "standalone",
+  "background_color": "#0c151e",
+  "theme_color": "#10b981",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

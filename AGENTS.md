@@ -11,7 +11,7 @@ Keep it that way unless there is a hard reason not to.
 
 - One JSON line per operation on stdout for machine commands; human output only
   for `doctor`, `onboard`, `status`, `init`, `use`, `unuse`, `project-status`, `seed`,
-  `align`, `policy` and `clone`.
+  `feature`, `align`, `policy` and `clone`.
 - Exit `0` healthy, `1` drift/error, `2` bad invocation.
 - Never copy skill content into an agent folder. Links only (junctions on Windows,
   symlinks elsewhere).
@@ -29,6 +29,8 @@ Keep it that way unless there is a hard reason not to.
       drift.py            plan / apply / sync / status / clone
       scope.py            a project's set: manifest, use, mount, align, protocol, gitignore
       govern.py           seeds (taste) and the policy levels
+      features.py         the names that are not skill names (alias -> skill), read
+                          before the catalog by use / missing / search
       llm.py              the connected model, one call, one audit log
       lifecycle.py        list, touch, pin, review, retire, export, import, diff, git,
                           index, search, demand, lint, new
@@ -74,6 +76,21 @@ own copy of HOME is a bug, not a style choice.
     python skillgram.py status --json
     python skillgram.py onboard --no-llm --json
     python skillgram.py install --dry-run
+
+## 1.10 additions
+
+- `features.py` is a registry of the names a human uses that are **not** skill names
+  (`impecable` -> `impeccable`), at `~/.agents/skillgram-features.json` (override with
+  `SKILLGRAM_FEATURES`). It is consulted **before** the catalog by `use` (`aliased`), `missing`
+  (`score: 99`, `why: feature: <name>`) and `search` (the row is prepended). Keep that order:
+  a registered name is a decision, a score is a guess. `feature list` is an action only when the
+  word stands alone, so `list` stays available as an alias.
+- The matching is a normalized dict lookup (lowercase, accents dropped, punctuation to
+  dashes) and never edit-distance: an unregistered typo must stay unknown instead of
+  silently resolving to the nearest skill.
+- Registering refuses a skill the hub does not have, and a row whose skill was retired is
+  reported (`known: false`) rather than linked. `feature` joins `seed` as a taste door, so it
+  is human-output (with `--json` for the machine).
 
 ## 1.1 additions
 

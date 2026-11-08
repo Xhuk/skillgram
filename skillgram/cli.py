@@ -14,6 +14,7 @@ from .adopt import (
     adopt_skill,
     apply_onboard,
     apply_precedence,
+    compact_space,
     flavor_scan,
     onboard,
     port_missing,
@@ -21,6 +22,7 @@ from .adopt import (
     replace_native_with_link,
 )
 from .drift import clone_hub, status, sync
+from .features import feature_skills
 from .govern import policy_show, seed_skills
 from .harnesses import (
     caller_identity,
@@ -46,6 +48,7 @@ from .lifecycle import (
     retire_skill,
     review_list,
     touch_usage,
+    vault_unused,
 )
 from .llm import llm_config
 from .scope import (
@@ -57,10 +60,19 @@ from .scope import (
     policy_check,
     project_status,
     promote,
+    prune_global_links,
     resolve_project,
     unpromote,
 )
-from .select import bootstrap, missing, propose_skill
+from .select import (
+    absorb_project_skills,
+    bootstrap,
+    gate_skill,
+    missing,
+    propose_skill,
+    repo_signals,
+    try_skill,
+)
 from .serve import (
     Watcher,
     daemon,
@@ -132,6 +144,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_adopt = sub.add_parser("adopt", parents=[common], help="adopt native skills: copy into the hub, verify the hash, leave a link")
     p_adopt.add_argument("path", nargs="?", help="the skill folder")
     p_adopt.add_argument("--all", action="store_true", help="every native skill of every harness")
+    p_adopt.add_argument("--project", help="absorb local skills installed inside this project into the hub and manifest")
+    p_adopt.add_argument("--no-quarantine", action="store_true", help="delete the original after verified adoption instead of moving to quarantine")
+    p_compact = sub.add_parser("compact", parents=[common], help="reclaim disk and context space: deduplicate native copies into links and purge quarantine")
+    p_compact.add_argument("--apply", action="store_true", help="replace duplicate native copies with links (default: report only)")
+    p_compact.add_argument("--purge-quarantine", action="store_true", help="remove ~/.agents/skillgram-quarantine backup copies")
+    p_compact.add_argument("--prune-global", action="store_true", help="also remove global home links so agents only load project-mounted skills")
+    p_compact.add_argument("--vault-unused", action="store_true", help="move 0-hit non-seed skills into <hub>/_vault so they cost 0 links and 0 context")
+    p_compact.add_argument("--project", help="also absorb local skills installed inside this project")
+    p_gate = sub.add_parser("gate", parents=[common], help="admission gate: token budget, security/injection scan, and routing collisions")
+    p_gate.add_argument("target", help="skill name in hub or path to a candidate skill folder")
+    p_try = sub.add_parser("try", parents=[common], help="stage a skill in a temporary git worktree, run the gate, and --accept or --reject it")
+    p_try.add_argument("source", help="path, git URL, or staged skill name")
+    p_try.add_argument("--project", help="project repo for the temporary git worktree (default: current project)")
+    p_try.add_argument("--accept", action="store_true", help="promote the staged skill into the hub (records upstream hash) and clean up worktree")
+    p_try.add_argument("--reject", action="store_true", help="discard the staged skill and remove the temporary worktree")
+    p_try.add_argument("--category", help="target hub category when accepting")
+    p_try.add_argument("--subpath", help="subpath inside the git repo if it holds multiple skills")
     p_mount = sub.add_parser("mount", parents=[common], help="materialize the project scope in every harness")
     p_mount.add_argument("--project", help="project folder (default: engram-style resolution)")
     p_mount.add_argument("--apply", action="store_true", help="create/remove the links (default: plan only)")
@@ -171,6 +200,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_seed.add_argument("skills", nargs="*", help="skill names (none: show the list)")
     p_seed.add_argument("--never", action="store_true", help="never recommend them instead")
     p_seed.add_argument("--remove", action="store_true", help="drop them from the list")
+    p_feat = sub.add_parser("feature", parents=[common],
+                            help="the names that are not skill names, and what each one means")
+    p_feat.add_argument("names", nargs="*",
+                        help="<alias> <skill> pairs, or `list` to print the registry")
+    p_feat.add_argument("--remove", action="store_true", help="drop these aliases from the registry")
+    p_feat.add_argument("--note", default="", help="why the name exists (kept with the row)")
     p_prop = sub.add_parser("propose", parents=[common], help="draft a new skill with the LLM and (with --apply) publish it")
     p_prop.add_argument("need", nargs="+")
     p_prop.add_argument("--project")
@@ -230,8 +265,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("doctor", parents=[common], help="inventory: harnesses, native, collisions, drift")
     p_status = sub.add_parser("status", parents=[common], help="current drift, touching nothing")
     p_status.add_argument("--verify", action="store_true", help="also verify where each link points (slow)")
+    p_status.add_argument("--flat-only", action="store_true", help="ignore category links (flat <agent>/skills/<skill> only)")
+    p_status.add_argument("--seeds-only", action="store_true", help="only check global links for seeds.always")
     p_sync = sub.add_parser("sync", parents=[common], help="apply the desired state (idempotent)")
     p_sync.add_argument("--dry-run", action="store_true")
+    p_sync.add_argument("--flat-only", action="store_true", help="link only <agent>/skills/<skill> (remove category junctions)")
+    p_sync.add_argument("--seeds-only", action="store_true", help="link only seeds.always globally into ~/.<agent>/skills")
     p_watch = sub.add_parser("watch", parents=[common], help="watch the hub and re-sync on change")
     p_watch.add_argument("--interval", type=float, default=5.0)
     p_daemon = sub.add_parser("daemon", parents=[common], help="JSON-line server for edgePass")
@@ -338,9 +377,10 @@ def _onboard(hub: Hub, args) -> dict | int:
         return plan
     applied = apply_onboard(hub, plan)
     replaced = {"quarantine": [], "links": [], "failures": []}
-    if args.replace_natives and applied["imported"]:
+    replaceable = applied["imported"] + applied.get("deduped", [])
+    if args.replace_natives and replaceable:
         replaced = replace_native_with_link(
-            hub, applied["imported"], home_dir() / ".agents" / "skillgram-quarantine"
+            hub, replaceable, home_dir() / ".agents" / "skillgram-quarantine"
         )
     linked = sync(hub, quiet=True)
     return {
@@ -363,7 +403,7 @@ def dispatch(args, hub: Hub) -> dict | int:
     cmd = args.cmd
 
     if cmd == "status":
-        return status(hub, deep=args.verify)
+        return status(hub, deep=args.verify, flat_only=args.flat_only, seeds_only=args.seeds_only)
 
     if cmd == "flavor":
         return flavor_scan(hub, apply=args.apply)
@@ -389,7 +429,9 @@ def dispatch(args, hub: Hub) -> dict | int:
 
     if cmd == "touch":
         proj = resolve_project(args.project)
-        result = touch_usage(Path(proj["path"]), args.skills, by=args.by)
+        proj_path = Path(proj["path"])
+        tags = repo_signals(proj_path)["tags"]
+        result = touch_usage(proj_path, args.skills, by=args.by, stack_tags=tags)
         result["project"] = str(proj["path"])
         return result
 
@@ -414,7 +456,7 @@ def dispatch(args, hub: Hub) -> dict | int:
         return index_build(hub)
 
     if cmd == "search":
-        return index_search(" ".join(args.text), limit=args.limit)
+        return index_search(" ".join(args.text), limit=args.limit, hub=hub)
 
     if cmd == "review":
         proj = resolve_project(args.project)
@@ -456,6 +498,9 @@ def dispatch(args, hub: Hub) -> dict | int:
         return seed_skills(hub, args.skills, mode="never" if args.never else "always",
                            remove=args.remove)
 
+    if cmd == "feature":
+        return feature_skills(hub, args.names, remove=args.remove, note=args.note)
+
     if cmd == "propose":
         proj = resolve_project(args.project)
         cfg = None if args.no_llm else llm_config()
@@ -477,11 +522,44 @@ def dispatch(args, hub: Hub) -> dict | int:
         return result
 
     if cmd == "adopt":
+        keep_q = not args.no_quarantine
+        if args.project:
+            proj = resolve_project(args.project)
+            return absorb_project_skills(hub, Path(proj["path"]), keep_quarantine=keep_q)
         if args.all:
-            return adopt_natives(hub)
+            return adopt_natives(hub, keep_quarantine=keep_q)
         if args.path:
-            return adopt_skill(hub, Path(args.path))
-        return {"ok": False, "op": "adopt", "error": "pass a folder or --all"}
+            return adopt_skill(hub, Path(args.path), keep_quarantine=keep_q)
+        return {"ok": False, "op": "adopt", "error": "pass a folder, --project, or --all"}
+
+    if cmd == "compact":
+        result = compact_space(hub, apply=args.apply, purge_quarantine=args.purge_quarantine)
+        if args.project:
+            proj = resolve_project(args.project)
+            result["absorbed_project"] = absorb_project_skills(
+                hub, Path(proj["path"]), keep_quarantine=not args.purge_quarantine
+            )
+        if args.vault_unused:
+            result["vault"] = vault_unused(hub, apply=args.apply)
+        if args.prune_global:
+            result["pruned_global"] = prune_global_links(hub, apply=args.apply)
+        return result
+
+    if cmd == "gate":
+        return gate_skill(hub, args.target)
+
+    if cmd == "try":
+        proj = resolve_project(args.project)
+        proj_path = Path(proj["path"]) if proj else None
+        return try_skill(
+            hub,
+            args.source,
+            project=proj_path,
+            accept=args.accept,
+            reject=args.reject,
+            category=args.category,
+            subpath=args.subpath,
+        )
 
     if cmd == "install":
         return install(hub, harness=args.harness, root=args.root, apply=not args.dry_run,
@@ -499,7 +577,8 @@ def dispatch(args, hub: Hub) -> dict | int:
         return _onboard(hub, args)
 
     if cmd == "sync":
-        return sync(hub, quiet=args.quiet, dry_run=args.dry_run)
+        return sync(hub, quiet=args.quiet, dry_run=args.dry_run,
+                    flat_only=args.flat_only, seeds_only=args.seeds_only)
 
     if cmd == "watch":
         if not hub.root.is_dir():
@@ -536,11 +615,15 @@ def dispatch(args, hub: Hub) -> dict | int:
 
     if cmd == "use":
         proj = resolve_project(args.project)
-        result = promote(hub, args.skills, Path(proj["path"]))
+        proj_path = Path(proj["path"])
+        result = promote(hub, args.skills, proj_path)
         # promoting a skill *is* using it: record who did it, so the next harness
         # reads a name instead of "agent"
         by = args.by or caller_identity()
-        result["uso"] = touch_usage(Path(proj["path"]), args.skills, by=by).get("touched", [])
+        tags = repo_signals(proj_path)["tags"]
+        promoted_names = result["created"] + result["already_present"]
+        result["uso"] = touch_usage(proj_path, promoted_names or args.skills,
+                                    by=by, stack_tags=tags).get("touched", [])
         result["by"] = by
         result["resolucion"] = proj["source"]
         return result
@@ -645,6 +728,92 @@ def human_output(args, result: dict) -> str | None:
             f"dead {result['dead']}, skipped {result['skipped']})"
         )
 
+    if cmd == "compact":
+        lines = [
+            f"hub: {result['hub']} ({result['hub_bytes']:,} bytes)",
+            f"native copies: {result['native_bytes']:,} bytes | "
+            f"quarantine: {result['quarantine_bytes']:,} bytes | "
+            f"reclaimable: {result['reclaimable_bytes']:,} bytes",
+            f"dedupable: {len(result['dedupable'])} ({result['dedupable_bytes']:,} bytes) | "
+            f"unique native: {len(result['unique_natives'])} | "
+            f"divergent: {len(result['divergent'])}",
+        ]
+        if result["divergent"]:
+            lines.append("divergent (kept untouched): " + ", ".join(
+                f"{d['harness']}/{d['skill']}" for d in result["divergent"][:20]
+            ))
+        if result["applied"]:
+            lines.append(
+                f"reclaimed: {result['freed_bytes']:,} bytes "
+                f"(linked {len(result['linked'])}, "
+                f"quarantine purged: {result['quarantine_purged']})"
+            )
+        else:
+            lines.append("(dry-run: run `skillgram compact --apply --purge-quarantine` to reclaim space)")
+        if result.get("vault"):
+            v = result["vault"]
+            lines.append(
+                f"vault (_vault): {v['candidates']} unused (0-hit) skills | "
+                f"{v['kept_active']} active (used/seeded)"
+            )
+        if result.get("absorbed_project"):
+            ab = result["absorbed_project"]
+            lines.append(f"project locals absorbed: {len(ab.get('absorbed', []))}")
+        if result.get("pruned_global"):
+            lines.append(f"global links pruned: {len(result['pruned_global'])}")
+        return "\n".join(lines)
+
+    if cmd == "gate":
+        if result.get("error"):
+            return f"gate failed: {result['error']}"
+        usage = result.get("usage") or {}
+        lines = [
+            f"skill: {result['skill']} ({'PASS' if result['ok'] else 'FAIL'})  hash: {result['hash']}",
+            f"token budget: ~{result['prompt_tokens']} prompt tokens (always) | "
+            f"~{result['body_tokens']} body tokens (on read) | {result['aux_files']} aux files",
+            f"contract (5 sections): {'ok' if result['contract_ok'] else 'missing sections'} | "
+            f"organic hits: {usage.get('total_hits', 0)} across {len(usage.get('projects') or [])} projects",
+        ]
+        if usage.get("stack_hits"):
+            lines.append("proven stack tags: " + ", ".join(
+                f"{k}({v})" for k, v in sorted(usage["stack_hits"].items())
+            ))
+        if result["security_issues"]:
+            lines.append("security issues: " + "; ".join(result["security_issues"]))
+        if result["lint_errors"]:
+            lines.append("lint errors: " + "; ".join(result["lint_errors"]))
+        if result["lint_warnings"]:
+            lines.append("warnings: " + "; ".join(result["lint_warnings"]))
+        if result["collisions"]:
+            lines.append("routing collisions: " + ", ".join(
+                f"{c['skill']} (score {c['score']})" for c in result["collisions"]
+            ))
+        return "\n".join(lines)
+
+    if cmd == "try":
+        if result.get("error"):
+            return f"try failed: {result['error']}"
+        act = result.get("action")
+        if act == "rejected":
+            return f"rejected and cleaned up trial for {result['skill']}"
+        if act == "accepted":
+            return (
+                f"accepted: {result['skill']} -> {result['category']} ({result['hub']})\n"
+                f"verified hash: {result['hash']}"
+                + (f"  upstream: {result['upstream'].get('repo', '')}@{result['upstream'].get('commit', '')[:8]}"
+                   if result.get("upstream", {}).get("repo") else "")
+            )
+        gate = result.get("gate") or {}
+        return (
+            f"staged: {result['skill']} ({result['staged']})\n"
+            + (f"worktree: {result['worktree']}\n" if result.get("worktree") else "")
+            + f"gate: {'PASS' if gate.get('ok') else 'WARN/FAIL'} "
+            f"(~{gate.get('prompt_tokens', 0)} prompt tokens, ~{gate.get('body_tokens', 0)} body tokens, "
+            f"{len(gate.get('collisions') or [])} routing collisions)\n"
+            + "next: test in the worktree, then run `skillgram try "
+            + f"{result['skill']} --accept` or `--reject`"
+        )
+
     if cmd == "install":
         return install_report(result)
 
@@ -660,6 +829,9 @@ def human_output(args, result: dict) -> str | None:
         return (
             f"project: {result['project_name']} ({result['project']})\n"
             f"promoted: {len(result['created'])} new, {len(result['already_present'])} already present\n"
+            + ("resolved from a feature: "
+               + ", ".join(f"{row['requested']} -> {row['skill']}" for row in result.get("aliased") or [])
+               + "\n" if result.get("aliased") else "")
             + (f"unknown in hub: {', '.join(result['unknown'])}\n" if result["unknown"] else "")
             + (f"occupied without link: {', '.join(result['ocupadas_sin_enlace'])}\n"
                if result["ocupadas_sin_enlace"] else "")
@@ -687,6 +859,35 @@ def human_output(args, result: dict) -> str | None:
             lines.append(f"{verb} {result['mode']}: {', '.join(result['changed'])}")
         if result.get("unknown"):
             lines.append(f"not in the hub: {', '.join(result['unknown'])}")
+        lines.append(f"file: {result['file']}")
+        return "\n".join(lines)
+
+    if cmd == "feature":
+        lines = []
+        for row in result.get("features") or []:
+            if not isinstance(row, dict):
+                lines.append(str(row))
+                continue
+            marker = "" if row["known"] else "  (not in the hub)"
+            note = f"  -- {row['note']}" if row["note"] else ""
+            lines.append(f"{row['name']} -> {row['skill']}{marker}{note}")
+        if not lines:
+            lines.append("no features yet: `skillgram feature impecable impeccable` "
+                         "teaches it the name you actually use")
+        if result.get("changed"):
+            lines.append("registered: "
+                         + ", ".join(f"{r['name']} -> {r['skill']}" for r in result["changed"]))
+        if result.get("removed"):
+            lines.append(f"dropped: {', '.join(result['removed'])}")
+        if result.get("absent"):
+            lines.append(f"was not registered: {', '.join(result['absent'])}")
+        if result.get("shadows"):
+            lines.append("shadows a hub skill (features are read first): "
+                         + ", ".join(f"{r['name']} -> {r['skill']}" for r in result["shadows"]))
+        if result.get("unknown"):
+            lines.append(f"not in the hub: {', '.join(result['unknown'])}")
+        if result.get("error"):
+            lines.append(f"error: {result['error']}")
         lines.append(f"file: {result['file']}")
         return "\n".join(lines)
 
