@@ -540,7 +540,7 @@ makes the quality gate usable on a corpus that already has history.
 
 ## Companion tool — EdgePass
 
-`skillgram` and **[EdgePass](https://xhuk.github.io/edgePass/)** ([GitHub](https://github.com/Xhuk/edgePass) · `winget install Xhuk.EdgePass`) are standalone tools designed to complement each other on an AI coding workstation:
+`skillgram` and **[EdgePass](https://xhuk.github.io/EdgePass/)** ([GitHub](https://github.com/Xhuk/EdgePass) · `winget install Xhuk.EdgePass`) are standalone tools designed to complement each other on an AI coding workstation:
 
 - **`skillgram`** governs *what your agents know*: one `SKILL.md` library, contract & admission gate, isolated `git worktree` trials, project manifests, and the zero-token `_vault`.
 - **`EdgePass`** governs *what your agents can access & run*: a desktop notch widget & control plane that injects OpenBao secrets without plaintext exposure, manages MCP servers/tunnels, and supervises local GitHub Actions runners.
