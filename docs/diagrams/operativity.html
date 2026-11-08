@@ -28,6 +28,13 @@
     -webkit-font-smoothing: antialiased;
   }
   main { max-width: 860px; margin: 0 auto; padding: 56px 24px 88px; }
+  nav.top {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+    padding-bottom: 20px; margin-bottom: 36px; border-bottom: 1px solid var(--line); font-size: 14px;
+  }
+  nav.top .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; color: var(--fg); }
+  nav.top .brand picture, nav.top .brand img { height: 34px; width: auto; display: block; }
+  nav.top .links { display: flex; gap: 18px; flex-wrap: wrap; }
   h1 { font: 600 30px/1.15 Georgia, "Times New Roman", serif; letter-spacing: -0.01em; margin: 0 0 8px; }
   .dek { color: var(--muted); margin: 0 0 8px; }
   .byline { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: 0.09em;
@@ -96,14 +103,32 @@
 <body>
 <main>
 
+  <nav class="top">
+    <a class="brand" href="../index.html">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="../assets/logo-lockup.svg">
+        <source media="(prefers-color-scheme: light)" srcset="../assets/logo-lockup-daylight.svg">
+        <img src="../assets/logo-lockup-daylight.svg" alt="skillgram">
+      </picture>
+    </a>
+    <div class="links">
+      <a href="../index.html">Overview</a>
+      <a href="../architecture-and-evidence.html">Architecture &amp; Evidence</a>
+      <a href="operativity.html"><b>Three Plates</b></a>
+      <a href="skillgram-install.html">Install Flow</a>
+      <a href="https://xhuk.github.io/edgePass/">edgePass</a>
+      <a href="https://github.com/Xhuk/skillgram">GitHub</a>
+    </div>
+  </nav>
+
   <h1>How skillgram operates</h1>
   <p class="dek">Three plates. No screenshots, no runtime required: the loop, the files it writes,
   and the arithmetic that decides which skills a repo is offered.</p>
   <div class="byline">
-    <span>skillgram 1.5.0</span>
+    <span>skillgram 1.10</span>
     <span>links, never copies</span>
     <span>stdlib only</span>
-    <span><a href="../">← back to the summary</a></span>
+    <span><a href="../index.html">&larr; back to Overview</a></span>
   </div>
 
   <!-- ─────────────────────────────── PLATE I ─────────────────────────────── -->
@@ -306,10 +331,12 @@
   </figure>
 
   <div class="foot">
-    <a href="../">summary</a>
+    <a href="../index.html">Overview</a>
+    <a href="../architecture-and-evidence.html">Architecture &amp; Evidence</a>
+    <a href="skillgram-install.html">Install Flow</a>
+    <a href="https://xhuk.github.io/edgePass/">edgePass</a>
     <a href="https://github.com/Xhuk/skillgram/blob/main/README.md">README</a>
-    <a href="https://github.com/Xhuk/skillgram/blob/main/CHANGELOG.md">changelog</a>
-    <a href="skillgram-install.html">the install flow, interactive</a>
+    <a href="https://github.com/Xhuk/skillgram/blob/main/CHANGELOG.md">Changelog</a>
   </div>
 
 </main>

@@ -56,7 +56,14 @@
     font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
-  main { max-width: 780px; margin: 0 auto; padding: 48px 24px 96px; }
+  main { max-width: 860px; margin: 0 auto; padding: 48px 24px 96px; }
+  nav.top {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+    padding-bottom: 20px; margin-bottom: 28px; border-bottom: 1px solid var(--line); font-size: 14px;
+  }
+  nav.top .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; color: var(--fg); }
+  nav.top .brand picture, nav.top .brand img { height: 34px; width: auto; display: block; }
+  nav.top .links { display: flex; gap: 18px; flex-wrap: wrap; }
   .hero-banner { margin-bottom: 28px; }
   .hero-banner picture, .hero-banner img {
     display: block; width: 100%; height: auto; border-radius: 14px;
@@ -89,6 +96,24 @@
 </head>
 <body>
 <main>
+  <nav class="top">
+    <a class="brand" href="index.html">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="assets/logo-lockup.svg">
+        <source media="(prefers-color-scheme: light)" srcset="assets/logo-lockup-daylight.svg">
+        <img src="assets/logo-lockup-daylight.svg" alt="skillgram">
+      </picture>
+    </a>
+    <div class="links">
+      <a href="index.html"><b>Overview</b></a>
+      <a href="architecture-and-evidence.html">Architecture &amp; Evidence</a>
+      <a href="diagrams/operativity.html">Three Plates</a>
+      <a href="diagrams/skillgram-install.html">Install Flow</a>
+      <a href="https://xhuk.github.io/edgePass/">edgePass</a>
+      <a href="https://github.com/Xhuk/skillgram">GitHub</a>
+    </div>
+  </nav>
+
   <div class="hero-banner">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="assets/banner-readme-dark.png">
